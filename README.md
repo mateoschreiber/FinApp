@@ -8,14 +8,60 @@ Para trabajar sin conexión, primero inicia sesión y sincroniza en cada disposi
 
 ## Despliegue local con Docker
 
-Requisitos: Docker Engine con Compose, un servidor o NAS que permanezca encendido, una dirección de red local estable, un nombre de dominio propio y un proxy HTTPS en el servidor. El acceso desde otros dispositivos y la instalación de la PWA requieren HTTPS con un certificado confiable. No se necesita publicar puertos a Internet.
+La aplicación corre en el NAS o servidor. Los dispositivos acceden por un proxy HTTPS instalado en el mismo equipo; Docker publica el puerto de la aplicación únicamente en `127.0.0.1:3000`. Para usar la PWA desde otro equipo, **configurar HTTPS y DNS local es un paso necesario**, no basta con abrir la IP del NAS.
 
-1. En el servidor, obtén el código y sitúate en esta carpeta. Define `FINAPP_ORIGIN` como la URL HTTPS exacta que usarán los dispositivos, por ejemplo `https://finanzas.ejemplo.com`, sin barra final ni comodines. Su valor debe permanecer definido en cada invocación de Compose. Define también `FINAPP_ADMIN_USERNAME` y `FINAPP_ADMIN_PASSWORD` como variables de entorno para el primer arranque. Elige una contraseña larga y única; evita incluirla en comandos que queden en el historial de la terminal. Estas últimas variables solo crean el primer administrador y no cambian credenciales existentes. Mantén las credenciales fuera del repositorio y restringe el acceso al entorno de ejecución de Docker.
-2. Ejecuta `docker compose up -d --build`. La base se guarda en el volumen `finapp_data` del proyecto Compose; no uses `docker compose down -v` si quieres conservarla.
-3. Cuando el primer administrador esté creado, elimina ambas variables del entorno y recrea el contenedor con `docker compose up -d --force-recreate`. Restringe el acceso al daemon Docker: los usuarios que pueden inspeccionarlo pueden ver variables de entorno del contenedor.
-4. Configura el proxy HTTPS como se indica abajo. Abre el dominio mediante HTTPS desde cada dispositivo de la red. El puerto interno de la aplicación solo se publica en `127.0.0.1` del servidor; no es accesible directamente desde otros equipos.
+### 1. Preparar el servidor
 
-El contenedor ejecuta la aplicación como usuario sin privilegios, guarda SQLite en `/data/finapp.sqlite` y verifica `GET /health`. Consulta `docker compose ps` y `docker compose logs app` para diagnosticar el arranque, sin compartir datos privados ni credenciales.
+Necesitas acceso a una terminal del NAS, Git, Docker Engine con Compose, una dirección IP local estable, un dominio propio y un proxy HTTPS. El servidor necesita conexión saliente para descargar imágenes, dependencias y emitir el certificado. Los comandos siguientes son para Bash en Linux; adapta las rutas y permisos a tu NAS.
+
+```bash
+docker --version
+docker compose version
+git clone https://github.com/mateoschreiber/FinApp.git
+cd FinApp
+```
+
+Si ya clonaste el repositorio, actualiza tu copia de `main` en lugar de volver a clonarlo. Comprueba primero que no tengas cambios locales que debas conservar.
+
+### 2. Configurar y arrancar
+
+Elige el nombre que usarás, por ejemplo `finanzas.tudominio.com`, y crea un archivo `.env` en la raíz del proyecto **sustituyendo ese nombre por el tuyo**:
+
+```dotenv
+FINAPP_ORIGIN=https://finanzas.tudominio.com
+```
+
+La dirección debe coincidir exactamente con la del navegador, incluyendo el puerto si no es el predeterminado y sin barra final. Compose usa este archivo cada vez que ejecutas sus comandos; el archivo está excluido de Git. Si la misma variable existe en tu terminal, tiene prioridad sobre `.env`.
+
+En la primera ejecución crea el administrador. El nombre es un ejemplo y la contraseña debe tener al menos 12 caracteres. Bash solicita la contraseña sin mostrarla en pantalla:
+
+```bash
+export FINAPP_ADMIN_USERNAME=admin
+read -rsp 'Contraseña del administrador: ' FINAPP_ADMIN_PASSWORD; echo
+export FINAPP_ADMIN_PASSWORD
+docker compose config --quiet
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail=50 app
+```
+
+Comprueba que el contenedor siga en ejecución y que no informe errores. La primera construcción puede tardar porque compila Rust. La contraseña y el usuario solo se utilizan para crear el primer administrador en una base vacía; cambiarlos después no cambia la cuenta ya creada. Evita compartir la salida de los comandos si contiene información privada.
+
+Una vez creado el administrador, retira las credenciales del entorno y recrea el contenedor sin ellas. Conserva `FINAPP_ORIGIN` en `.env`:
+
+```bash
+unset FINAPP_ADMIN_USERNAME FINAPP_ADMIN_PASSWORD
+docker compose up -d --force-recreate
+docker compose ps
+```
+
+Las variables de entorno del contenedor son visibles para quienes pueden administrarlo mediante Docker; restringe ese acceso. La base se guarda en el volumen de Compose `finapp_data`, no dentro de la imagen. **No ejecutes `docker compose down -v` si quieres conservar los datos.**
+
+### 3. Configurar HTTPS y entrar
+
+Configura el proxy y el DNS local como se explica a continuación. Después abre tu URL HTTPS desde un dispositivo conectado a la misma red e inicia sesión con el administrador. En **Configuración**, crea cuentas y categorías antes de registrar movimientos. Para instalar la PWA en Android, usa la opción de instalación del navegador cuando esté disponible; primero debes acceder por HTTPS confiable.
+
+Si la página no abre, comprueba `docker compose ps`, los registros con `docker compose logs --tail=100 app`, que el proxy pueda conectar a `127.0.0.1:3000`, que el nombre resuelva a la IP local correcta y que la URL coincida con `FINAPP_ORIGIN`. El servidor expone `GET /health` para comprobaciones locales. Los cambios aún no sincronizados permanecen solo en el dispositivo y no se incluyen en el respaldo del servidor.
 
 ### HTTPS con un dominio de Cloudflare
 
