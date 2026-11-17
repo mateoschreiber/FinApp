@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="es"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#173f3a"><link rel="manifest" href="/manifest.webmanifest">
+<link rel="stylesheet" href="/style.css"><title>MisFinanzas</title>
+</head><body>
+<header><div><strong>MisFinanzas</strong><span> Tus cuentas, en un lugar</span></div><p id="connection" role="status"></p></header>
+<main>
+<div id="notice" role="alert" hidden></div>
+<p id="storage-warning" role="status" hidden></p>
+<section id="login-view"><h1>Iniciar sesión</h1><p>Ingresa con la cuenta creada por el administrador.</p>
+<form id="login-form"><label>Usuario<input name="username" required autocomplete="username"></label><label>Contraseña<input name="password" type="password" required autocomplete="current-password"></label><button>Entrar</button><button id="cancel-login" type="button" class="secondary" hidden>Volver a mis datos locales</button></form></section>
+<div id="app-view" hidden>
+<div class="topline"><h1>Tu resumen</h1><div class="actions"><button type="button" id="relogin" class="secondary">Volver a iniciar sesión</button><button type="button" id="logout" class="secondary">Cerrar sesión</button></div></div>
+<p id="user-label"></p><p id="sync-status" role="status"></p><button id="retry-sync" type="button" class="secondary">Sincronizar ahora</button>
+<div class="tabs" aria-label="Secciones"><button data-tab="summary" type="button">Resumen</button><button data-tab="entry" type="button">Nuevo movimiento</button><button data-tab="settings" type="button">Configuración</button></div>
+<section id="summary"><h2>Saldos</h2><p id="balance-note"></p><div id="balances" class="cards"></div><h2>Movimientos</h2><div id="movements"></div><h2 id="pending-title" hidden>Cambios pendientes</h2><div id="pending-list"></div><h2 id="conflicts-title" hidden>Conflictos por resolver</h2><div id="conflicts"></div></section>
+<section id="entry" hidden><h2 id="entry-heading">Nuevo movimiento</h2><form id="movement-form">
+<input type="hidden" name="id"><label>Tipo<select name="kind"><option value="expense">Gasto</option><option value="income">Ingreso</option><option value="payment">Pago de tarjeta</option></select></label>
+<label>Importe en guaraníes<input name="amount" type="number" inputmode="numeric" min="1" step="1" required></label>
+<label>Cuenta<select name="account_id" required></select></label><label id="category-label">Categoría<select name="category_id"></select></label><label id="card-label" hidden>Tarjeta<select name="card_account_id"></select></label>
+<label>Fecha<input name="date" type="date" required></label><label>Descripción <span>(opcional)</span><input name="description" maxlength="500"></label><label>Notas <span>(opcional)</span><textarea name="notes" maxlength="4000"></textarea></label>
+<div class="actions"><button>Guardar movimiento</button><button type="button" id="cancel-edit" class="secondary" hidden>Cancelar edición</button></div></form></section>
+<section id="settings" hidden><h2>Configuración</h2><p>Necesitas conexión para modificar cuentas y categorías.</p><div class="grid">
+<form id="account-form"><h3>Cuentas</h3><div id="account-list"></div><input type="hidden" name="id"><label>Nombre<input name="name" maxlength="160" required></label><label>Tipo<select name="kind"><option value="cash">Efectivo</option><option value="bank">Banco</option><option value="wallet">Billetera</option><option value="card">Tarjeta de crédito</option></select></label><label>Saldo inicial en guaraníes<input name="initial_balance" type="number" step="1" value="0" required></label><button>Guardar cuenta</button><button class="secondary" type="button" id="account-cancel">Nueva cuenta</button></form>
+<form id="category-form"><h3>Categorías</h3><div id="category-list"></div><input type="hidden" name="id"><label>Nombre<input name="name" maxlength="160" required></label><label>Tipo<select name="kind"><option value="expense">Gasto</option><option value="income">Ingreso</option></select></label><button>Guardar categoría</button><button class="secondary" type="button" id="category-cancel">Nueva categoría</button></form>
+<form id="user-form" hidden><h3>Nuevo usuario</h3><label>Usuario<input name="username" maxlength="64" required></label><label>Contraseña<input name="password" type="password" minlength="12" maxlength="256" required autocomplete="new-password"></label><button>Crear usuario</button></form></div></section>
+</div></main><script type="module" src="/app.mjs"></script></body></html>

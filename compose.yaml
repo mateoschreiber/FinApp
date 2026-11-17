@@ -1,0 +1,20 @@
+services:
+  app:
+    build: .
+    image: finapp:local
+    restart: unless-stopped
+    environment:
+      FINAPP_BIND: 0.0.0.0:3000
+      FINAPP_DB_PATH: /data/finapp.sqlite
+      FINAPP_ORIGIN: ${FINAPP_ORIGIN:?Define FINAPP_ORIGIN con la URL HTTPS exacta}
+      FINAPP_ADMIN_USERNAME: ${FINAPP_ADMIN_USERNAME:-}
+      FINAPP_ADMIN_PASSWORD: ${FINAPP_ADMIN_PASSWORD:-}
+    ports:
+      - "127.0.0.1:3000:3000"
+    volumes:
+      - finapp_data:/data
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  finapp_data:

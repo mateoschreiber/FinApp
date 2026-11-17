@@ -1,0 +1,11 @@
+.git
+.worktrees
+target
+.env
+.env.*
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+backups
+node_modules
