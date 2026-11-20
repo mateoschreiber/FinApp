@@ -1,7 +1,10 @@
 use crate::{AppState, db::Database};
 use argon2::{
     Argon2, PasswordHash, PasswordHasher, PasswordVerifier,
-    password_hash::{SaltString, rand_core::OsRng},
+    password_hash::{
+        SaltString,
+        rand_core::{OsRng, RngCore},
+    },
 };
 use axum::{
     Json,
@@ -9,7 +12,6 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
-use rand::RngCore;
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -165,7 +167,7 @@ pub async fn login(State(state): State<AppState>, Json(creds): Json<Credentials>
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let mut bytes = [0u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
+    OsRng.fill_bytes(&mut bytes);
     let token = hex::encode(bytes);
     let conn = match state.db.0.lock() {
         Ok(c) => c,

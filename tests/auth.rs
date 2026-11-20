@@ -461,6 +461,38 @@ async fn login_rate_limit_counts_unknown_users_and_blocks_every_user() {
 }
 
 #[tokio::test]
+async fn session_tokens_are_64_hex_characters_and_unique() {
+    let db = Database::open_memory().unwrap();
+    db.bootstrap_admin("admin", "password-1234").unwrap();
+    let app = app(db, "https://finanzas.example".to_owned());
+    let mut tokens = Vec::new();
+    for _ in 0..2 {
+        let login = request(
+            &app,
+            "POST",
+            "/api/login",
+            r#"{"username":"admin","password":"password-1234"}"#,
+            None,
+        )
+        .await;
+        let cookie = login
+            .headers()
+            .get("set-cookie")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .split(';')
+            .next()
+            .unwrap();
+        let token = cookie.strip_prefix("__Host-finapp_session=").unwrap();
+        assert_eq!(token.len(), 64);
+        assert!(token.bytes().all(|b| b.is_ascii_hexdigit()));
+        tokens.push(token.to_owned());
+    }
+    assert_ne!(tokens[0], tokens[1]);
+}
+
+#[tokio::test]
 async fn security_headers_cover_assets_api_and_rejected_requests_without_disabling_static_cache() {
     let app = app(
         Database::open_memory().unwrap(),
