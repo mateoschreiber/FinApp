@@ -396,6 +396,70 @@ async fn default_admin_does_not_add_a_user_to_an_initialized_database() {
     );
 }
 
+// shortcut: window recovery is tested on admit_login_attempt with fixed instants (src/auth.rs), not over HTTP; inject a clock into AppState if the limiter changes shape.
+#[tokio::test]
+async fn login_rate_limit_counts_successful_and_failed_attempts() {
+    let db = Database::open_memory().unwrap();
+    db.bootstrap_admin("admin", "password-1234").unwrap();
+    let app = app(db, "https://finanzas.example".to_owned());
+    for attempt in 0..20 {
+        let (password, expected) = if attempt % 2 == 0 {
+            ("password-1234", StatusCode::OK)
+        } else {
+            ("wrong-password-1234", StatusCode::UNAUTHORIZED)
+        };
+        let body = format!(r#"{{"username":"admin","password":"{password}"}}"#);
+        assert_eq!(
+            request(&app, "POST", "/api/login", &body, None)
+                .await
+                .status(),
+            expected,
+            "attempt {attempt}"
+        );
+    }
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/api/login",
+            r#"{"username":"admin","password":"password-1234"}"#,
+            None
+        )
+        .await
+        .status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+}
+
+#[tokio::test]
+async fn login_rate_limit_counts_unknown_users_and_blocks_every_user() {
+    let db = Database::open_memory().unwrap();
+    db.bootstrap_admin("admin", "password-1234").unwrap();
+    let app = app(db, "https://finanzas.example".to_owned());
+    for attempt in 0..20 {
+        let body = format!(r#"{{"username":"ghost{attempt}","password":"password-1234"}}"#);
+        assert_eq!(
+            request(&app, "POST", "/api/login", &body, None)
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED,
+            "unknown user {attempt}"
+        );
+    }
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/api/login",
+            r#"{"username":"admin","password":"password-1234"}"#,
+            None
+        )
+        .await
+        .status(),
+        StatusCode::TOO_MANY_REQUESTS
+    );
+}
+
 #[tokio::test]
 async fn security_headers_cover_assets_api_and_rejected_requests_without_disabling_static_cache() {
     let app = app(

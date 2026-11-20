@@ -74,6 +74,8 @@ Configura el proxy y el DNS local como se explica a continuación. Después abre
 
 Si la página no abre, comprueba `docker compose ps`, los registros con `docker compose logs --tail=100 app`, que el proxy pueda conectar a `127.0.0.1:3000`, que el nombre resuelva a la IP local correcta y que la URL coincida con `FINAPP_ORIGIN`. El servidor expone `GET /health` para comprobaciones locales. Los cambios aún no sincronizados permanecen solo en el dispositivo y no se incluyen en el respaldo del servidor.
 
+El inicio de sesión admite como máximo 20 intentos cada 60 segundos, sumando los de todos los usuarios, existentes o no. Si se superan, durante ese minuto nadie puede entrar, incluido el administrador. Es un límite deliberado: no hay límite por IP porque el proxy local oculta la dirección real del cliente.
+
 ### HTTPS con un dominio de Cloudflare
 
 Usa un proxy que corra en el **mismo host** y pueda acceder a `127.0.0.1:3000`. Por ejemplo, instala Caddy con el [módulo DNS de Cloudflare](https://github.com/caddy-dns/cloudflare), que debe estar compilado en el binario: el Caddy estándar no lo incluye. Crea en Cloudflare un token limitado a la zona con permisos `Zone.Zone:Read` y `Zone.DNS:Edit` y entrégalo al proceso Caddy como variable `CF_API_TOKEN`, sin incluirlo en Git ni en el Caddyfile.

@@ -13,6 +13,7 @@ use rand::RngCore;
 use rusqlite::{OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::VecDeque;
 use uuid::Uuid;
 
 #[derive(Clone, Serialize)]
@@ -95,6 +96,19 @@ pub fn current_user(db: &Database, headers: &HeaderMap) -> Option<User> {
     conn.query_row("SELECT u.id,u.username,u.is_admin FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token_hash=?1 AND s.expires_at>?2", params![token_hash(token), now()], |r| Ok(User { id: r.get(0)?, username: r.get(1)?, is_admin: r.get(2)? })).optional().ok().flatten()
 }
 
+// shortcut: one global budget of 20 login attempts per 60 s, so one client can lock everyone out for up to a minute; a per-IP limit does not work behind the local proxy, which hides the real client address. Upgrade only if the proxy forwards trusted client addresses.
+fn admit_login_attempt(attempts: &mut VecDeque<i64>, now: i64) -> bool {
+    let cutoff = now - 60;
+    while attempts.front().is_some_and(|time| *time <= cutoff) {
+        attempts.pop_front();
+    }
+    if attempts.len() >= 20 {
+        return false;
+    }
+    attempts.push_back(now);
+    true
+}
+
 pub async fn login(State(state): State<AppState>, Json(creds): Json<Credentials>) -> Response {
     // Limit aggregate failed and successful attempts, including unknown users.
     {
@@ -102,14 +116,9 @@ pub async fn login(State(state): State<AppState>, Json(creds): Json<Credentials>
             Ok(a) => a,
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         };
-        let cutoff = now() - 60;
-        while attempts.front().is_some_and(|time| *time <= cutoff) {
-            attempts.pop_front();
-        }
-        if attempts.len() >= 20 {
+        if !admit_login_attempt(&mut attempts, now()) {
             return StatusCode::TOO_MANY_REQUESTS.into_response();
         }
-        attempts.push_back(now());
     }
     if creds.username.len() > 64 || creds.password.len() > 256 {
         return StatusCode::UNAUTHORIZED.into_response();
@@ -273,5 +282,50 @@ pub async fn create_user(
             StatusCode::CONFLICT.into_response()
         }
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::admit_login_attempt;
+    use std::collections::VecDeque;
+
+    #[test]
+    fn twenty_attempts_per_window_then_recovery_after_sixty_seconds() {
+        let mut attempts = VecDeque::new();
+        for _ in 0..20 {
+            assert!(admit_login_attempt(&mut attempts, 100));
+        }
+        assert!(!admit_login_attempt(&mut attempts, 100));
+        assert!(!admit_login_attempt(&mut attempts, 159));
+        assert!(admit_login_attempt(&mut attempts, 160));
+    }
+
+    #[test]
+    fn window_releases_attempts_gradually() {
+        let mut attempts = VecDeque::new();
+        for _ in 0..10 {
+            assert!(admit_login_attempt(&mut attempts, 0));
+        }
+        for _ in 0..10 {
+            assert!(admit_login_attempt(&mut attempts, 30));
+        }
+        assert!(!admit_login_attempt(&mut attempts, 59));
+        for _ in 0..10 {
+            assert!(admit_login_attempt(&mut attempts, 60));
+        }
+        assert!(!admit_login_attempt(&mut attempts, 60));
+    }
+
+    #[test]
+    fn rejected_attempts_do_not_extend_the_window() {
+        let mut attempts = VecDeque::new();
+        for _ in 0..20 {
+            assert!(admit_login_attempt(&mut attempts, 0));
+        }
+        for second in 1..60 {
+            assert!(!admit_login_attempt(&mut attempts, second));
+        }
+        assert!(admit_login_attempt(&mut attempts, 60));
     }
 }
