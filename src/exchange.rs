@@ -211,8 +211,14 @@ fn parse_date(s: &str) -> Result<String, String> {
     let date = if let Some((day, rest)) = s.split_once('/') {
         let (month, year) = rest
             .split_once('/')
-            .ok_or_else(|| format!("Fecha inválida «{s}»."))?;
-        format!("{year:0>4}-{month:0>2}-{day:0>2}")
+            .ok_or_else(|| format!("Fecha inválida «{s}». Usa dd/mm/aaaa o aaaa-mm-dd."))?;
+        // Two-digit years are ambiguous; never pad them into a wrong century.
+        if year.len() != 4 {
+            return Err(format!(
+                "Fecha inválida «{s}». El año necesita cuatro dígitos."
+            ));
+        }
+        format!("{year}-{month:0>2}-{day:0>2}")
     } else {
         s.split('T').next().unwrap_or(s).to_owned()
     };
@@ -861,4 +867,35 @@ pub(crate) fn routes() -> Router<AppState> {
             )),
         )
         .route("/api/export/{kind}", get(export))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_dates_require_a_four_digit_year() {
+        assert_eq!(parse_date("26/1/2026").unwrap(), "2026-01-26");
+        assert_eq!(parse_date("2026-01-26").unwrap(), "2026-01-26");
+        assert_eq!(parse_date("2024-02-29T10:30").unwrap(), "2024-02-29");
+        assert!(
+            parse_date("26/1/26")
+                .unwrap_err()
+                .contains("cuatro dígitos")
+        );
+        assert!(
+            parse_date("2026/1/26")
+                .unwrap_err()
+                .contains("cuatro dígitos")
+        );
+    }
+
+    #[test]
+    fn invalid_text_dates_are_rejected_with_calendar_limits() {
+        assert!(parse_date("31/2/2026").is_err());
+        assert!(parse_date("29/2/2023").is_err());
+        assert!(parse_date("2023-02-29").is_err());
+        assert!(parse_date("2026-13-01").is_err());
+        assert_eq!(parse_date("1/1/2026").unwrap(), "2026-01-01");
+    }
 }
