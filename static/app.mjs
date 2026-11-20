@@ -753,6 +753,7 @@ $('history-filter').addEventListener('input',() => {currentPage=1; renderHistory
 $('previous-page').addEventListener('click',() => {currentPage--; renderHistory();});
 $('next-page').addEventListener('click',() => {currentPage++; renderHistory();});
 $('retry-sync').addEventListener('click',() => synchronize().catch(showError));
+$('quick-entry').addEventListener('click',() => tab('entry'));
 window.addEventListener('online',() => synchronize().catch(showError));
 window.addEventListener('offline',() => {$('connection').textContent='Sin conexión';});
 window.addEventListener('storage',event => {
