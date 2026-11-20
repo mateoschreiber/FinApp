@@ -85,8 +85,17 @@ export async function openUserStore(userId) {
     snapshot() {
       return run(['snapshot'], 'readonly', tx => request(tx.objectStore('snapshot').get('current')));
     },
+    snapshotCursor() {
+      return run(['snapshot'], 'readonly', tx => request(tx.objectStore('snapshot').get('cursor')));
+    },
     replaceSnapshot(value) {
-      return run(['snapshot'], 'readwrite', tx => request(tx.objectStore('snapshot').put(value, 'current')));
+      return run(['snapshot'], 'readwrite', async tx => {
+        const snapshots = tx.objectStore('snapshot');
+        await request(snapshots.put(value, 'current'));
+        if (Number.isSafeInteger(value?.cursor) && typeof value.epoch === 'string') {
+          await request(snapshots.put({cursor:value.cursor, epoch:value.epoch}, 'cursor'));
+        } else await request(snapshots.delete('cursor'));
+      });
     },
     pending() {
       return run(['operations'], 'readonly', tx => request(tx.objectStore('operations').getAll()));
@@ -152,6 +161,33 @@ export async function openUserStore(userId) {
         await request(store.put(op));
       });
     },
+    markRejected(id, rejection) {
+      if (!Number.isInteger(rejection?.status) || typeof rejection.message !== 'string') throw new Error('Invalid rejection');
+      return run(['operations'], 'readwrite', async tx => {
+        const operations = tx.objectStore('operations');
+        const item = await request(operations.get(id));
+        if (item?.status !== 'pending' || item.dependsOn !== null) throw new Error('Operation is not ready');
+        await request(operations.put({...item, status:'rejected', rejection}));
+      });
+    },
+    retryRejected(id, correction = {}) {
+      return run(['operations'], 'readwrite', async tx => {
+        const operations = tx.objectStore('operations');
+        const item = await request(operations.get(id));
+        if (item?.status !== 'rejected') throw new Error('El cambio ya fue resuelto.');
+        const replacement = {
+          ...item, id: crypto.randomUUID(), status: 'pending',
+          data: Object.hasOwn(correction, 'data') ? correction.data : item.data,
+        };
+        validOperation(replacement);
+        delete replacement.rejection;
+        const children = (await request(operations.getAll())).filter(child=>child.dependsOn === item.id);
+        await request(operations.add(replacement));
+        for (const child of children) await request(operations.put({...child, dependsOn:replacement.id}));
+        await request(operations.delete(id));
+        return replacement;
+      });
+    },
     resolveConflict(id, resolution, { discardDependents = false } = {}) {
       return run(['operations'], 'readwrite', async tx => {
         const store = tx.objectStore('operations');
@@ -180,8 +216,13 @@ export async function openUserStore(userId) {
         const snapshots = tx.objectStore('snapshot');
         const snapshot = await request(snapshots.get('current'));
         if (!snapshot || !Array.isArray(snapshot.operations)) throw new Error('Snapshot unavailable');
-        snapshot.operations = snapshot.operations.filter(op => op.id !== conflict.recordId);
-        if (conflict.server !== null) snapshot.operations.push(conflict.server);
+        const cached = snapshot.operations.find(op=>op.id === conflict.recordId);
+        if (!cached || (conflict.server && cached.version <= conflict.server.version)) {
+          snapshot.operations = snapshot.operations.filter(op => op.id !== conflict.recordId);
+          if (conflict.server !== null) snapshot.operations.push(conflict.server);
+        } else if (!conflict.server && cached.version === conflict.baseVersion) {
+          snapshot.operations = snapshot.operations.filter(op => op.id !== conflict.recordId);
+        }
         await request(snapshots.put(snapshot, 'current'));
         for (const dependentId of descendants(operations, id)) await request(store.delete(dependentId));
         await request(store.delete(id));

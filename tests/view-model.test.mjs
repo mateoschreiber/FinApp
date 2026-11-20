@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateBalances, overlayOperations, checkEditBase } from '../static/view-model.mjs';
+import { calculateBalances, overlayOperations, checkEditBase, setupStep } from '../static/view-model.mjs';
+
+test('guía la configuración inicial sin volver a pedir datos existentes', () => {
+  assert.equal(setupStep({accounts: [], categories: []}), 'account');
+  assert.equal(setupStep({accounts: [{id:'a'}], categories: []}), 'category');
+  assert.equal(setupStep({accounts: [{id:'a'}], categories: [{id:'c',kind:'income'}]}), 'category');
+  assert.equal(setupStep({accounts: [{id:'a'}], categories: [{id:'c',kind:'expense'}]}), 'ready');
+});
 
 test('pago de tarjeta reduce ambos saldos sin ser gasto adicional', () => {
   const accounts = [{id:'a',kind:'bank',initial_balance:100000},{id:'c',kind:'card',initial_balance:40000}];

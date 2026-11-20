@@ -99,3 +99,58 @@ test('requires cross-tab locking and a matching store identity', async () => {
   await assert.rejects(syncUser(store, 'sync-owner', async()=>{}, null), /bloqueo/i);
   store.close();
 });
+
+test('un rechazo persiste y permite sincronizar otro movimiento y corregir con dependientes', async () => {
+  const user='sync-reject-independent';
+  let store=await openUserStore(user);
+  const first=await store.enqueue({recordId:'invalid',action:'create',baseVersion:null,data:{amount:0}});
+  const child=await store.enqueue({recordId:'invalid',action:'update',dependsOn:first.id,baseVersion:null,data:{amount:15}});
+  await store.enqueue({recordId:'valid',action:'create',baseVersion:null,data:{amount:20}});
+  const send = async(url,options)=>{
+    if (url.startsWith('/api/snapshot')) return Response.json(snapshot());
+    const body=JSON.parse(options.body);
+    if (body.amount===0) return Response.json({message:'Importe inválido'},{status:400});
+    return Response.json({status:'applied',operation:{id:body.id,version:body.expected_version+1,amount:body.amount}});
+  };
+  assert.deepEqual(await sync(store,send),{applied:1,conflicts:0,rejected:1});
+  store.close(); store=await openUserStore(user);
+  const rejected=(await store.pending()).find(item=>item.id===first.id);
+  assert.equal(rejected.status,'rejected');
+  assert.equal(rejected.rejection.message,'Importe inválido');
+  assert.deepEqual(await sync(store,send),{applied:0,conflicts:0,rejected:0});
+  await assert.rejects(store.discardOperation(first.id),/dependent/i);
+  const corrected=await store.retryRejected(first.id,{data:{amount:10}});
+  assert.notEqual(corrected.id,first.id);
+  assert.equal((await store.pending()).find(item=>item.id===child.id).dependsOn,corrected.id);
+  assert.deepEqual(await sync(store,send),{applied:2,conflicts:0,rejected:0});
+  assert.deepEqual(await store.pending(),[]);
+  store.close();
+});
+
+test('la sincronización incremental conserva filas previas, tombstones y cambios locales',async()=>{
+  const store=await openUserStore('sync-delta');
+  const base={accounts:[{id:'a'}],categories:[],operations:[{id:'x',version:1},{id:'y',version:1}],epoch:'e1',cursor:3};
+  await store.replaceSnapshot(base);
+  let seen='';
+  await sync(store,async url=>{
+    seen=url;
+    return Response.json({accounts:[],categories:[{id:'c'}],operations:[{id:'x',version:2,deleted:true}],epoch:'e1',cursor:5,incremental:true});
+  });
+  assert.equal(seen,'/api/snapshot?since=3&epoch=e1');
+  const latest=await store.snapshot();
+  assert.deepEqual(latest.accounts,base.accounts);
+  assert.deepEqual(latest.operations,[{id:'x',version:2,deleted:true},base.operations[1]]);
+  await assert.rejects(sync(store,async()=>Response.json({...latest,epoch:'incorrect',cursor:6})),/cursor/i);
+  assert.deepEqual(await store.snapshot(),latest);
+  store.close();
+});
+
+test('una respuesta de sesión o servidor conserva el cambio listo para reintentar',async()=>{
+  for (const status of [401,403,429,503]){
+    const store=await openUserStore('sync-transient-'+status);
+    const item=await store.enqueue({recordId:'r',action:'create',baseVersion:null,data:{amount:10}});
+    await assert.rejects(sync(store,async url=>url==='/api/snapshot' ? Response.json(snapshot()) : new Response(null,{status})),new RegExp(String(status)));
+    assert.deepEqual(await store.pending(),[item]);
+    store.close();
+  }
+});

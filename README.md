@@ -83,29 +83,59 @@ Configura el DNS local o el router para resolver ese nombre a la dirección priv
 
 Si el proxy corre en otro contenedor, `127.0.0.1` de ese contenedor no apunta al servidor de la aplicación: utiliza una red Docker privada compartida y el nombre del servicio, y no publiques el puerto de la aplicación. Conserva la misma dirección HTTPS para evitar separar los datos locales de la PWA por origen.
 
-## Respaldo manual y restauración
+## Respaldo y ensayo de restauración
 
-La copia solo contiene datos que ya llegaron al servidor; los cambios sin sincronizar siguen en sus dispositivos. Protege los respaldos como datos financieros privados y guárdalos en otro equipo o almacenamiento. La imagen incluye el programa `sqlite3`; su comando `.backup` usa la API de respaldo de SQLite y genera una instantánea consistente incluso si la aplicación está activa. No copies únicamente el archivo de base mientras SQLite esté abierto: en modo WAL podrían faltar transacciones.
+Los comprobantes se guardan dentro de SQLite y forman parte de la copia. Solo se incluyen datos ya sincronizados con el servidor; los cambios pendientes siguen en los dispositivos. Protege los respaldos como datos financieros privados y copia ambos archivos generados a otro equipo o almacenamiento. El checksum detecta alteraciones accidentales, pero no cifra ni autentica la copia.
 
-Desde la carpeta del proyecto, con el contenedor en ejecución, crea primero una instantánea dentro del volumen y cópiala al servidor (el nombre indicado no debe existir previamente):
+Con el servicio `app` iniciado, en el servidor ejecuta:
 
-```sh
-docker compose exec -T app sqlite3 /data/finapp.sqlite '.backup /data/respaldo-manual.sqlite'
-docker compose exec -T app sqlite3 /data/respaldo-manual.sqlite 'PRAGMA integrity_check;'
-docker compose cp app:/data/respaldo-manual.sqlite ./respaldo-manual.sqlite
+```bash
+bash scripts/backup.sh "$HOME/finapp-backups"
 ```
 
-Comprueba que el resultado de `integrity_check` sea exactamente `ok` y conserva la copia fuera del volumen de la aplicación. No reutilices el nombre de la instantánea para evitar sobrescribir una copia previa. Repite la verificación de integridad en el archivo copiado si tienes `sqlite3` instalado en el host.
+El script usa `.backup` de SQLite para crear una instantánea coherente incluso con WAL, comprueba `integrity_check` y compara SHA-256 antes y después de copiarla. Publica un archivo `.sqlite` y otro `.sqlite.sha256` con el mismo nombre y muestra su ruta. Una ejecución fallida devuelve un código distinto de cero; revisa el mensaje y corrígelo. No copies solamente el archivo activo de SQLite y no uses una copia sin su correspondiente checksum.
 
-Para ensayar la recuperación **sin tocar la base principal**, usa un proyecto Compose con nombre distinto y un volumen nuevo. El siguiente ejemplo asume que `respaldo-manual.sqlite` está en el directorio actual:
+Para ensayar la restauración de un archivo específico, con la imagen `finapp:local` ya construida:
 
-```sh
-docker compose -p finapp-prueba create app
-docker compose -p finapp-prueba cp ./respaldo-manual.sqlite app:/data/finapp.sqlite
-docker compose -p finapp-prueba run --rm --no-deps --user 0 --entrypoint sh app -c 'chown 10001:10001 /data/finapp.sqlite'
-docker compose -p finapp-prueba run --rm --no-deps --entrypoint sqlite3 app /data/finapp.sqlite 'PRAGMA integrity_check;'
+```bash
+bash scripts/restore-check.sh "$HOME/finapp-backups/EL_ARCHIVO.sqlite"
 ```
 
-El resultado debe ser `ok`. El proyecto de prueba debe usar un volumen nuevo sin archivos `-wal` o `-shm` de una ejecución anterior; no reutilices un volumen existente para esta prueba. Para comprobar además el inicio de la aplicación, inicia la instancia de prueba con otro puerto local y otro dominio o con un proxy temporal aislado, e inicia sesión y revisa los datos. No uses las instrucciones de prueba para reemplazar una base de producción: para una restauración real, detén la aplicación, conserva antes la base y sus archivos WAL/SHM, y restaura en un volumen nuevo con la aplicación detenida.
+El script comprueba el checksum, restaura en un volumen Docker nuevo, verifica `integrity_check` e inicia un contenedor **sin red ni puertos publicados** para consultar `/health`. El volumen y el contenedor temporales se eliminan al terminar; no se modifica el volumen de la aplicación. El ensayo verifica el arranque y la integridad estructural, pero no sustituye revisar manualmente que los movimientos y comprobantes esperados sean los correctos. Para restaurar producción, detén el servicio y conserva una copia previa, incluidos los archivos WAL/SHM; trabaja sobre un volumen nuevo y verifica los datos antes de ponerlo en uso.
+
+### Programar una copia diaria en Ubuntu
+
+Estos ejemplos usan systemd en el servidor. Sustituye `/srv/FinApp`, `/srv/finapp-backups` y `USUARIO_DOCKER` por rutas absolutas y un usuario autorizado a ejecutar Docker. El acceso a Docker equivale a privilegios elevados; limita quién puede usarlo. El directorio de destino debe estar protegido y tener espacio suficiente. El servicio necesita acceso al `.env` del proyecto, incluido `FINAPP_ORIGIN`; no incluyas contraseñas en los archivos de unidad.
+
+`/etc/systemd/system/finapp-backup.service`:
+
+```ini
+[Unit]
+Description=Respaldo SQLite de MisFinanzas
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=USUARIO_DOCKER
+WorkingDirectory=/srv/FinApp
+ExecStart=/usr/bin/bash /srv/FinApp/scripts/backup.sh /srv/finapp-backups
+```
+
+`/etc/systemd/system/finapp-backup.timer`:
+
+```ini
+[Unit]
+Description=Respaldo diario de MisFinanzas
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+```
+
+Tras crear las unidades, ejecuta `sudo systemctl daemon-reload` y `sudo systemctl enable --now finapp-backup.timer`. Comprueba `systemctl list-timers finapp-backup.timer`, ejecuta una prueba con `sudo systemctl start finapp-backup.service` y revisa `journalctl -u finapp-backup.service -n 50`. `Persistent=true` recupera una ejecución perdida cuando se activa el temporizador. El script no elimina copias antiguas: establece una retención y supervisa el espacio disponible. Sin supervisión y sin copias fuera del servidor, una programación no garantiza recuperación.
 
 Fuentes: [respaldo SQLite](https://www.sqlite.org/backup.html), [desafío DNS de Caddy](https://caddyserver.com/docs/automatic-https#dns-challenge) y [publicación de puertos Docker](https://docs.docker.com/reference/compose-file/services/#ports).

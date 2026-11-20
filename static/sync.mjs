@@ -24,6 +24,8 @@ function wireChange(item) {
     account_id: data.account_id ?? null,
     category_id: data.category_id ?? null,
     card_account_id: data.card_account_id ?? null,
+    destination_account_id: data.destination_account_id ?? null,
+    original_operation_id: data.original_operation_id ?? null,
     amount: data.amount ?? null,
     date: data.date ?? null,
     description: data.description ?? null,
@@ -37,14 +39,37 @@ async function runSync(store, userId, fetcher) {
   if (!who.ok) throw httpError(who.status);
   const identity = await who.json();
   if (identity?.id !== userId) throw new Error('La sesión pertenece a otro usuario');
-  const response = await fetcher('/api/snapshot', {credentials: 'same-origin', cache: 'no-store', headers});
+  const priorCursor = await store.snapshotCursor();
+  const cursorValid = Number.isSafeInteger(priorCursor?.cursor) && priorCursor.cursor >= 0 && typeof priorCursor.epoch === 'string';
+  const path = cursorValid ? '/api/snapshot?' + new URLSearchParams({since: priorCursor.cursor, epoch: priorCursor.epoch}) : '/api/snapshot';
+  const response = await fetcher(path, {credentials: 'same-origin', cache: 'no-store', headers});
   if (!response.ok) throw httpError(response.status);
   const snapshot = await response.json();
   if (!validSnapshot(snapshot)) throw new Error('Respuesta de sincronización inválida');
-  await store.replaceSnapshot(snapshot);
+  let writeSnapshot = true;
+  if (snapshot.incremental) {
+    if (!cursorValid || snapshot.epoch !== priorCursor.epoch || !Number.isSafeInteger(snapshot.cursor) || snapshot.cursor < priorCursor.cursor) throw new Error('Cursor de sincronización inválido');
+    const groups = ['accounts','categories','operations'];
+    writeSnapshot = snapshot.cursor !== priorCursor.cursor || groups.some(key=>snapshot[key].length);
+    if (writeSnapshot) {
+      const previous = await store.snapshot();
+      for (const key of groups) {
+        const rows = new Map(previous[key].map(row => [row.id, row]));
+        for (const row of snapshot[key]) rows.set(row.id, row);
+        snapshot[key] = [...rows.values()];
+        if (key !== 'operations') snapshot[key].sort((a,b) => (a.name||'').localeCompare(b.name||'','es') || a.id.localeCompare(b.id));
+      }
+      const detailKey = row => JSON.stringify([row.entity,row.id]);
+      const details = new Map((previous.catalog_details || []).map(row => [detailKey(row),row]));
+      for (const row of snapshot.catalog_details || []) details.set(detailKey(row),row);
+      snapshot.catalog_details = [...details.values()];
+    }
+  }
+  if (writeSnapshot) await store.replaceSnapshot(snapshot);
 
   let applied = 0;
   let conflicts = 0;
+  let rejected = 0;
   while (true) {
     const pending = await store.pending();
     const item = pending.find(op => op.status === 'pending' && op.dependsOn === null);
@@ -54,17 +79,26 @@ async function runSync(store, userId, fetcher) {
       headers: {...headers, 'Content-Type': 'application/json'},
       body: JSON.stringify(wireChange(item)),
     });
-    if (result.status !== 409 && !result.ok) throw httpError(result.status);
+    if (result.status === 409 || [400,413,422].includes(result.status)) {
+      const payload = await result.json().catch(()=>null);
+      if (result.status === 409 && payload?.status === 'conflict') {
+        await store.markConflict(item.id, payload.operation);
+        conflicts++;
+      } else {
+        const message = typeof payload?.message === 'string' ? payload.message.slice(0,500) :
+          'El servidor rechazó este movimiento (HTTP '+result.status+'). Revisa los datos antes de reintentar.';
+        await store.markRejected(item.id,{status:result.status,message});
+        rejected++;
+      }
+      continue;
+    }
+    if (!result.ok) throw httpError(result.status);
     const payload = await result.json();
-    if (result.status === 409 && payload.status === 'conflict') {
-      await store.markConflict(item.id, payload.operation);
-      conflicts++;
-    } else if (result.ok && payload.status === 'applied') {
-      await store.acknowledge(item.id, payload.operation);
-      applied++;
-    } else throw new Error('Respuesta de sincronización inválida');
+    if (payload.status !== 'applied') throw new Error('Respuesta de sincronización inválida');
+    await store.acknowledge(item.id, payload.operation);
+    applied++;
   }
-  return {applied, conflicts};
+  return {applied, conflicts, rejected};
 }
 
 export function syncUser(store, expectedUserId, fetcher = globalThis.fetch, locks = globalThis.navigator?.locks) {

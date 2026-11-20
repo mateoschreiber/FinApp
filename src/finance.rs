@@ -1,14 +1,15 @@
 //! User-scoped financial records and versioned, idempotent writes.
-use crate::{AppState, auth, db::Database};
+use crate::{AppState, auth, catalog, db::Database};
 use axum::{
     Json, Router,
-    extract::State,
+    extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
-use rusqlite::{OptionalExtension, params};
+use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Account {
@@ -33,6 +34,10 @@ pub struct Change {
     pub account_id: Option<String>,
     pub category_id: Option<String>,
     pub card_account_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destination_account_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_operation_id: Option<String>,
     pub amount: Option<i64>,
     pub date: Option<String>,
     pub description: Option<String>,
@@ -47,6 +52,10 @@ pub struct Operation {
     pub account_id: String,
     pub category_id: Option<String>,
     pub card_account_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub destination_account_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_operation_id: Option<String>,
     pub amount: i64,
     pub date: String,
     pub description: Option<String>,
@@ -60,6 +69,10 @@ pub enum Outcome {
 }
 #[derive(Debug, Serialize)]
 pub struct Snapshot {
+    pub catalog_details: Vec<crate::catalog::Detail>,
+    pub cursor: i64,
+    pub epoch: String,
+    pub incremental: bool,
     pub accounts: Vec<Account>,
     pub categories: Vec<Category>,
     pub operations: Vec<Operation>,
@@ -76,13 +89,9 @@ impl From<rusqlite::Error> for Error {
     }
 }
 
-pub(crate) const MIGRATION: &str = "CREATE TABLE IF NOT EXISTS finance_accounts(user_id TEXT NOT NULL,id TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL,initial_balance INTEGER NOT NULL,PRIMARY KEY(user_id,id));
-      CREATE TABLE IF NOT EXISTS finance_categories(user_id TEXT NOT NULL,id TEXT NOT NULL,name TEXT NOT NULL,kind TEXT NOT NULL,PRIMARY KEY(user_id,id));
-      CREATE TABLE IF NOT EXISTS finance_operations(user_id TEXT NOT NULL,id TEXT NOT NULL,version INTEGER NOT NULL,data TEXT NOT NULL,PRIMARY KEY(user_id,id));
-      CREATE TABLE IF NOT EXISTS finance_requests(user_id TEXT NOT NULL,id TEXT NOT NULL,request TEXT NOT NULL,response TEXT NOT NULL,PRIMARY KEY(user_id,id));";
 pub fn initialize(db: &Database) -> Result<(), Error> {
     let conn = db.0.lock().map_err(|_| Error::Database)?;
-    conn.execute_batch(MIGRATION)?;
+    conn.execute_batch(include_str!("../migrations/002_finance.sql"))?;
     Ok(())
 }
 fn id_ok(s: &str) -> bool {
@@ -91,57 +100,59 @@ fn id_ok(s: &str) -> bool {
 fn name_ok(s: &str) -> bool {
     !s.trim().is_empty() && s.len() <= 160 && !s.chars().any(char::is_control)
 }
-const SAFE: i64 = 9_007_199_254_740_991;
-fn validate_balances(conn: &rusqlite::Connection, user: &str) -> Result<(), Error> {
-    use std::collections::HashMap;
-    let mut stmt =
-        conn.prepare("SELECT id,kind,initial_balance FROM finance_accounts WHERE user_id=?1")?;
-    let accounts = stmt
-        .query_map([user], |r| {
-            Ok((
-                r.get::<_, String>(0)?,
-                r.get::<_, String>(1)?,
-                r.get::<_, i64>(2)?,
-            ))
-        })?
-        .collect::<Result<Vec<_>, _>>()?;
-    let mut amounts: HashMap<String, (String, i128)> = accounts
-        .into_iter()
-        .map(|(id, kind, amount)| (id, (kind, i128::from(amount))))
-        .collect();
-    let mut stmt = conn.prepare("SELECT data FROM finance_operations WHERE user_id=?1")?;
-    let rows = stmt
-        .query_map([user], |r| r.get::<_, String>(0))?
-        .collect::<Result<Vec<_>, _>>()?;
-    for row in rows {
-        let op: Operation = serde_json::from_str(&row).map_err(|_| Error::Database)?;
-        if op.deleted {
-            continue;
-        }
-        let source = amounts.get_mut(&op.account_id).ok_or(Error::Database)?;
-        let amount = i128::from(op.amount);
-        match op.kind.as_str() {
-            "income" => source.1 += if source.0 == "card" { -amount } else { amount },
-            "expense" => source.1 += if source.0 == "card" { amount } else { -amount },
-            "payment" => {
-                source.1 -= amount;
-                let card = amounts
-                    .get_mut(op.card_account_id.as_deref().ok_or(Error::Database)?)
-                    .ok_or(Error::Database)?;
-                card.1 -= amount;
-            }
-            _ => return Err(Error::Database),
-        }
+pub(crate) const SAFE: i64 = 9_007_199_254_740_991;
+pub(crate) fn validate_balance(conn: &Connection, user: &str, account: &str) -> Result<(), Error> {
+    let initial: i64 = conn.query_row("SELECT initial_balance FROM finance_accounts WHERE user_id=?1 AND id=?2", params![user,account], |r|r.get(0))?;
+    let mut stmt = conn.prepare("SELECT delta FROM finance_balance_postings WHERE user_id=?1 AND account_id=?2")?;
+    let mut balance=i128::from(initial);
+    for row in stmt.query_map(params![user,account], |r|r.get::<_,i64>(0))? {
+        balance += i128::from(row?);
     }
-    if amounts
-        .values()
-        .any(|(_, amount)| amount.abs() > i128::from(SAFE))
-    {
-        return Err(Error::Invalid);
-    }
+    if balance.abs()>i128::from(SAFE) {return Err(Error::Invalid);}
     Ok(())
 }
+
+pub(crate) fn balances_in(
+    conn: &Connection, user: &str, end: Option<&str>,
+) -> Result<BTreeMap<String, i128>, rusqlite::Error> {
+    let mut accounts = conn.prepare("SELECT a.id,a.initial_balance,
+        CASE WHEN ?2 IS NULL OR d.cutoff_date IS NULL OR d.cutoff_date<=?2 THEN 1 ELSE 0 END
+        FROM finance_accounts a LEFT JOIN catalog_details d
+        ON d.user_id=a.user_id AND d.entity='account' AND d.id=a.id WHERE a.user_id=?1")?;
+    let mut balances = accounts.query_map(params![user,end], |row| {
+        let included:bool=row.get(2)?;
+        let initial: i64=row.get(1)?;
+        Ok((row.get::<_,String>(0)?, if included { i128::from(initial) } else { 0 }))
+    })?.collect::<Result<BTreeMap<_,_>,_>>()?;
+    let mut postings = conn.prepare("SELECT account_id,delta FROM finance_balance_postings
+        WHERE user_id=?1 AND (?2 IS NULL OR date<=?2)")?;
+    for row in postings.query_map(params![user,end],|row| Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?)))? {
+        let (id,delta)=row?;
+        *balances.get_mut(&id).ok_or(rusqlite::Error::InvalidQuery)?+=i128::from(delta);
+    }
+    Ok(balances)
+}
+
+pub(crate) fn changed(conn: &Connection, user: &str, entity: &str, id: &str) -> Result<(), Error> {
+    conn.execute("INSERT OR REPLACE INTO finance_changes(user_id,entity,id) VALUES(?1,?2,?3)", params![user,entity,id])?;
+    Ok(())
+}
+pub(crate) fn write<T>(db: &Database, action: impl FnOnce(&Connection) -> Result<T, Error>) -> Result<T,Error> {
+    let mut conn = db.0.lock().map_err(|_| Error::Database)?;
+    let tx = conn.transaction()?;
+    let result = action(&tx)?;
+    tx.commit()?;
+    Ok(result)
+}
 pub fn save_account(db: &Database, user: &str, value: &Account) -> Result<(), Error> {
+    write(db, |tx| save_account_in(tx,user,value))
+}
+pub(crate) fn save_account_in(tx: &Connection, user: &str, value: &Account) -> Result<(), Error> {
+    upsert_account_in(tx,user,value)?;
+    validate_balance(tx, user,&value.id)?;
+    changed(tx,user,"account",&value.id)
+}
+pub(crate) fn upsert_account_in(tx: &Connection, user: &str, value: &Account) -> Result<(), Error> {
     if !id_ok(&value.id)
         || !name_ok(&value.name)
         || !["cash", "bank", "wallet", "card"].contains(&value.kind.as_str())
@@ -149,8 +160,6 @@ pub fn save_account(db: &Database, user: &str, value: &Account) -> Result<(), Er
     {
         return Err(Error::Invalid);
     }
-    let mut conn = db.0.lock().map_err(|_| Error::Database)?;
-    let tx = conn.transaction()?;
     let previous: Option<String> = tx
         .query_row(
             "SELECT kind FROM finance_accounts WHERE user_id=?1 AND id=?2",
@@ -162,18 +171,18 @@ pub fn save_account(db: &Database, user: &str, value: &Account) -> Result<(), Er
         return Err(Error::Invalid);
     }
     tx.execute("INSERT INTO finance_accounts VALUES(?1,?2,?3,?4,?5) ON CONFLICT(user_id,id) DO UPDATE SET name=excluded.name,initial_balance=excluded.initial_balance",params![user,value.id,value.name,value.kind,value.initial_balance])?;
-    validate_balances(&tx, user)?;
-    tx.commit()?;
     Ok(())
 }
 pub fn save_category(db: &Database, user: &str, value: &Category) -> Result<(), Error> {
+    write(db, |tx| save_category_in(tx,user,value))
+}
+pub(crate) fn save_category_in(conn: &rusqlite::Connection, user: &str, value: &Category) -> Result<(), Error> {
     if !id_ok(&value.id)
         || !name_ok(&value.name)
         || !["income", "expense"].contains(&value.kind.as_str())
     {
         return Err(Error::Invalid);
     }
-    let conn = db.0.lock().map_err(|_| Error::Database)?;
     let previous: Option<String> = conn
         .query_row(
             "SELECT kind FROM finance_categories WHERE user_id=?1 AND id=?2",
@@ -185,9 +194,9 @@ pub fn save_category(db: &Database, user: &str, value: &Category) -> Result<(), 
         return Err(Error::Invalid);
     }
     conn.execute("INSERT INTO finance_categories VALUES(?1,?2,?3,?4) ON CONFLICT(user_id,id) DO UPDATE SET name=excluded.name",params![user,value.id,value.name,value.kind])?;
-    Ok(())
+    changed(conn,user,"category",&value.id)
 }
-fn valid_date(s: &str) -> bool {
+pub(crate) fn valid_date(s: &str) -> bool {
     let b = s.as_bytes();
     if b.len() != 10
         || b[4] != b'-'
@@ -215,6 +224,22 @@ fn optional_text_ok(s: &Option<String>, max: usize) -> bool {
         .is_none_or(|v| v.len() <= max && !v.chars().any(|c| c.is_control() && c != '\n'))
 }
 pub fn apply(db: &Database, user: &str, c: &Change) -> Result<Outcome, Error> {
+    if c.id.starts_with("loan:") || matches!(c.kind.as_deref(), Some("loan_draw" | "loan_repayment")) {
+        return Err(Error::Invalid);
+    }
+    write(db, |tx| apply_in(tx,user,c))
+}
+pub(crate) fn apply_in(tx: &rusqlite::Connection, user: &str, c: &Change) -> Result<Outcome, Error> {
+    apply_change(tx,user,c,false)
+}
+pub(crate) fn apply_import_in(tx: &Connection, user: &str, change: &Change) -> Result<Outcome, Error> {
+    if change.id.starts_with("loan:") {
+        return Err(Error::Invalid);
+    }
+    apply_change(tx,user,change,true)
+}
+
+fn apply_change(tx: &Connection, user: &str, c: &Change, importing: bool) -> Result<Outcome, Error> {
     if !id_ok(&c.id)
         || !id_ok(&c.request_id)
         || c.expected_version < 0
@@ -224,8 +249,6 @@ pub fn apply(db: &Database, user: &str, c: &Change) -> Result<Outcome, Error> {
         return Err(Error::Invalid);
     }
     let request = serde_json::to_string(c).map_err(|_| Error::Invalid)?;
-    let mut conn = db.0.lock().map_err(|_| Error::Database)?;
-    let tx = conn.transaction()?;
     let prior: Option<(String, String)> = tx
         .query_row(
             "SELECT request,response FROM finance_requests WHERE user_id=?1 AND id=?2",
@@ -256,7 +279,7 @@ pub fn apply(db: &Database, user: &str, c: &Change) -> Result<Outcome, Error> {
     }
     let next = c.expected_version.checked_add(1).ok_or(Error::Invalid)?;
     let operation = if c.deleted {
-        let mut o = current.ok_or(Error::Invalid)?;
+        let mut o = current.clone().ok_or(Error::Invalid)?;
         o.version = next;
         o.deleted = true;
         o
@@ -276,7 +299,21 @@ pub fn apply(db: &Database, user: &str, c: &Change) -> Result<Outcome, Error> {
             )
             .optional()?;
         let account_kind = account_kind.ok_or(Error::Invalid)?;
+        if (c.destination_account_id.is_some() && kind != "transfer") || (c.original_operation_id.is_some() && kind != "refund") {
+            return Err(Error::Invalid);
+        }
         match kind.as_str() {
+            "transfer" => {
+                let dest = c.destination_account_id.as_ref().ok_or(Error::Invalid)?;
+                let eligible: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM finance_accounts WHERE user_id=?1 AND id=?2 AND kind!='card')",params![user,dest], |r| r.get(0))?;
+                if !eligible || dest == &account_id || account_kind == "card" || c.category_id.is_some() || c.card_account_id.is_some() {return Err(Error::Invalid);}
+            }
+            "refund" => {
+                if c.original_operation_id.is_none() || c.category_id.is_none() || c.card_account_id.is_some() {return Err(Error::Invalid);}
+            }
+            "loan_draw" | "loan_repayment" => {
+                if (!importing && !c.id.starts_with("loan:")) || account_kind == "card" || c.category_id.is_some() || c.card_account_id.is_some() {return Err(Error::Invalid);}
+            }
             "income" | "expense" => {
                 if c.card_account_id.is_some() {
                     return Err(Error::Invalid);
@@ -320,29 +357,79 @@ pub fn apply(db: &Database, user: &str, c: &Change) -> Result<Outcome, Error> {
             account_id,
             category_id: c.category_id.clone(),
             card_account_id: c.card_account_id.clone(),
+            destination_account_id:c.destination_account_id.clone(),
+            original_operation_id:c.original_operation_id.clone(),
             amount,
             date,
             description: c.description.clone(),
             notes: c.notes.clone(),
         }
     };
-    let data = serde_json::to_string(&operation).map_err(|_| Error::Database)?;
-    tx.execute("INSERT INTO finance_operations VALUES(?1,?2,?3,?4) ON CONFLICT(user_id,id) DO UPDATE SET version=excluded.version,data=excluded.data",params![user,c.id,next,data])?;
-    validate_balances(&tx, user)?;
+    let op = &operation;
+    if op.kind=="refund" && !op.deleted {
+        let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM finance_operations WHERE user_id=?1 AND id=?2 AND kind='expense' AND deleted=0)",params![user,op.original_operation_id], |r|r.get(0))?;
+        if !exists { return Err(Error::Invalid); }
+    }
+    if !importing && !op.deleted {
+        for (entity, id, previous) in [
+            ("account", Some(op.account_id.as_str()), current.as_ref().map(|o| o.account_id.as_str())),
+            ("account", op.card_account_id.as_deref(), current.as_ref().and_then(|o| o.card_account_id.as_deref())),
+            ("account", op.destination_account_id.as_deref(), current.as_ref().and_then(|o| o.destination_account_id.as_deref())),
+            ("category", op.category_id.as_deref(), current.as_ref().and_then(|o| o.category_id.as_deref())),
+        ] {
+            if let Some(id)=id.filter(|_| entity!="category" || op.kind!="refund") {
+                if Some(id)!=previous && catalog::is_archived(tx,user,entity,id)? {
+                    return Err(Error::Invalid);
+                }
+            }
+        }
+    }
+    tx.execute("INSERT INTO finance_operations(user_id,id,version,deleted,kind,account_id,category_id,card_account_id,destination_account_id,original_operation_id,amount,date,description,notes)
+        VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14)
+        ON CONFLICT(user_id,id) DO UPDATE SET version=excluded.version,deleted=excluded.deleted,kind=excluded.kind,account_id=excluded.account_id,
+        category_id=excluded.category_id,card_account_id=excluded.card_account_id,destination_account_id=excluded.destination_account_id,
+        original_operation_id=excluded.original_operation_id,amount=excluded.amount,date=excluded.date,description=excluded.description,notes=excluded.notes",
+        params![user,op.id,op.version,op.deleted,op.kind,op.account_id,op.category_id,op.card_account_id,op.destination_account_id,op.original_operation_id,op.amount,op.date,op.description,op.notes])?;
+    let invalid_refunds: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM finance_operations r JOIN finance_operations e ON e.user_id=r.user_id AND e.id=r.original_operation_id
+        WHERE r.user_id=?1 AND r.deleted=0 AND (e.id=?2 OR e.id=?3) GROUP BY e.id
+        HAVING TOTAL(r.amount)>e.amount OR MAX(e.deleted OR e.kind!='expense' OR r.date<e.date OR
+            (r.account_id!=e.account_id AND EXISTS(SELECT 1 FROM finance_accounts a WHERE a.user_id=r.user_id AND a.id=r.account_id AND a.kind='card'))
+            OR r.category_id IS NOT e.category_id))",
+        params![user,op.id,op.original_operation_id], |r|r.get(0))?;
+    if invalid_refunds {return Err(Error::Invalid);}
+    let mut touched = std::collections::BTreeSet::new();
+    for row in current.iter().chain(std::iter::once(op)) {
+        touched.insert(&row.account_id);
+        touched.extend(row.card_account_id.iter());
+        touched.extend(row.destination_account_id.iter());
+    }
+    if !importing {
+        for id in touched { validate_balance(tx,user,id)?; }
+    }
+    changed(tx,user,"operation",&op.id)?;
     let outcome = Outcome::Applied(operation);
     let response = serde_json::to_string(&outcome).map_err(|_| Error::Database)?;
     tx.execute(
         "INSERT INTO finance_requests VALUES(?1,?2,?3,?4)",
         params![user, c.request_id, request, response],
     )?;
-    tx.commit()?;
     Ok(outcome)
 }
 pub fn snapshot(db: &Database, user: &str) -> Result<Snapshot, Error> {
+    snapshot_since(db,user,None,None)
+}
+pub fn snapshot_since(db: &Database, user: &str, since: Option<i64>, epoch: Option<&str>) -> Result<Snapshot, Error> {
     let conn = db.0.lock().map_err(|_| Error::Database)?;
-    let mut stmt=conn.prepare("SELECT id,name,kind,initial_balance FROM finance_accounts WHERE user_id=?1 ORDER BY name,id")?;
+    let current_epoch: String = conn.query_row("SELECT id FROM sync_epoch", [], |r|r.get(0))?;
+    let cursor = conn.query_row("SELECT COALESCE(MAX(seq),0) FROM finance_changes WHERE user_id=?1",[user], |r|r.get::<_,i64>(0))?;
+    let after = since.filter(|n| (0..=cursor).contains(n) && epoch==Some(&current_epoch));
+    fn selection(table: &str, entity: &str, fields: &str, order: &str, incremental: bool) -> String {
+        let filter = if incremental {format!(" AND id IN (SELECT id FROM finance_changes WHERE user_id=?1 AND entity='{entity}' AND seq>?2)")} else {" AND ?2 IS NULL".into()};
+        format!("SELECT {fields} FROM {table} WHERE user_id=?1 {filter} ORDER BY {order}")
+    }
+    let mut stmt=conn.prepare(&selection("finance_accounts","account","id,name,kind,initial_balance","name,id",after.is_some()))?;
     let accounts = stmt
-        .query_map([user], |r| {
+        .query_map(params![user,after], |r| {
             Ok(Account {
                 id: r.get(0)?,
                 name: r.get(1)?,
@@ -351,10 +438,9 @@ pub fn snapshot(db: &Database, user: &str) -> Result<Snapshot, Error> {
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    let mut stmt = conn
-        .prepare("SELECT id,name,kind FROM finance_categories WHERE user_id=?1 ORDER BY name,id")?;
+    let mut stmt = conn.prepare(&selection("finance_categories","category","id,name,kind","name,id",after.is_some()))?;
     let categories = stmt
-        .query_map([user], |r| {
+        .query_map(params![user,after], |r| {
             Ok(Category {
                 id: r.get(0)?,
                 name: r.get(1)?,
@@ -363,52 +449,58 @@ pub fn snapshot(db: &Database, user: &str) -> Result<Snapshot, Error> {
         })?
         .collect::<Result<Vec<_>, _>>()?;
     let mut stmt =
-        conn.prepare("SELECT data FROM finance_operations WHERE user_id=?1 ORDER BY id")?;
+        conn.prepare(&selection("finance_operations","operation","data","id",after.is_some()))?;
     let rows = stmt
-        .query_map([user], |r| r.get::<_, String>(0))?
+        .query_map(params![user,after], |r| r.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
     let operations = rows
         .into_iter()
         .map(|s| serde_json::from_str(&s).map_err(|_| Error::Database))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Snapshot {
+        catalog_details:crate::catalog::list_in(&conn,user,after)?,
+        cursor,epoch:current_epoch,incremental:after.is_some(),
         accounts,
         categories,
         operations,
     })
 }
 fn fail(error: Error) -> Response {
+    status(error).into_response()
+}
+pub(crate) fn status(error: Error) -> StatusCode {
     match error {
         Error::Invalid => StatusCode::BAD_REQUEST,
         Error::DuplicateRequest => StatusCode::CONFLICT,
         Error::Database => StatusCode::INTERNAL_SERVER_ERROR,
     }
-    .into_response()
 }
-fn bound_user(db: &Database, h: &HeaderMap) -> Result<auth::User, StatusCode> {
+pub(crate) fn bound_user(db: &Database, h: &HeaderMap) -> Result<auth::User, StatusCode> {
     let user = auth::current_user(db, h).ok_or(StatusCode::UNAUTHORIZED)?;
     if h.get("x-finapp-user").and_then(|v| v.to_str().ok()) != Some(user.id.as_str()) {
         return Err(StatusCode::FORBIDDEN);
     }
     Ok(user)
 }
-async fn get_snapshot(State(s): State<AppState>, h: HeaderMap) -> Response {
+#[derive(Deserialize)]
+struct SnapshotQuery { since: Option<i64>, epoch: Option<String> }
+async fn get_snapshot(State(s): State<AppState>, Query(query): Query<SnapshotQuery>, h: HeaderMap) -> Response {
     let u = match bound_user(&s.db, &h) {
         Ok(u) => u,
         Err(e) => return e.into_response(),
     };
-    match snapshot(&s.db, &u.id) {
+    match snapshot_since(&s.db, &u.id,query.since,query.epoch.as_deref()) {
         Ok(v) => Json(v).into_response(),
         Err(e) => fail(e),
     }
 }
-async fn post_account(State(s): State<AppState>, h: HeaderMap, Json(v): Json<Account>) -> Response {
+async fn post_account(State(s): State<AppState>, h: HeaderMap, Json(mut input): Json<catalog::AccountInput>) -> Response {
     let u = match bound_user(&s.db, &h) {
         Ok(u) => u,
         Err(e) => return e.into_response(),
     };
-    match save_account(&s.db, &u.id, &v) {
-        Ok(()) => Json(v).into_response(),
+    match write(&s.db, |tx| catalog::save_account(tx,&u.id,&mut input)) {
+        Ok(()) => Json(input.account).into_response(),
         Err(e) => fail(e),
     }
 }

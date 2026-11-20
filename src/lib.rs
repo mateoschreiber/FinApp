@@ -1,7 +1,13 @@
 pub mod auth;
+pub mod catalog;
+pub mod credit;
 pub mod db;
+pub mod exchange;
 pub mod finance;
+pub mod history;
 pub mod ledger;
+pub mod planning;
+pub mod reconciliation;
 
 use axum::{
     Router,
@@ -91,6 +97,12 @@ pub fn app(db: Database, origin: String) -> Router {
         .route("/api/me", get(auth::me))
         .route("/api/users", post(auth::create_user))
         .merge(finance::routes())
+        .merge(catalog::routes())
+        .merge(credit::routes())
+        .merge(exchange::routes())
+        .merge(history::routes())
+        .merge(planning::routes())
+        .merge(reconciliation::routes())
         .fallback_service(tower_http::services::ServeDir::new("static"))
         .layer(middleware::from_fn_with_state(
             state.clone(),
