@@ -102,42 +102,68 @@ fn name_ok(s: &str) -> bool {
 }
 pub(crate) const SAFE: i64 = 9_007_199_254_740_991;
 pub(crate) fn validate_balance(conn: &Connection, user: &str, account: &str) -> Result<(), Error> {
-    let initial: i64 = conn.query_row("SELECT initial_balance FROM finance_accounts WHERE user_id=?1 AND id=?2", params![user,account], |r|r.get(0))?;
-    let mut stmt = conn.prepare("SELECT delta FROM finance_balance_postings WHERE user_id=?1 AND account_id=?2")?;
-    let mut balance=i128::from(initial);
-    for row in stmt.query_map(params![user,account], |r|r.get::<_,i64>(0))? {
+    let initial: i64 = conn.query_row(
+        "SELECT initial_balance FROM finance_accounts WHERE user_id=?1 AND id=?2",
+        params![user, account],
+        |r| r.get(0),
+    )?;
+    let mut stmt = conn
+        .prepare("SELECT delta FROM finance_balance_postings WHERE user_id=?1 AND account_id=?2")?;
+    let mut balance = i128::from(initial);
+    for row in stmt.query_map(params![user, account], |r| r.get::<_, i64>(0))? {
         balance += i128::from(row?);
     }
-    if balance.abs()>i128::from(SAFE) {return Err(Error::Invalid);}
+    if balance.abs() > i128::from(SAFE) {
+        return Err(Error::Invalid);
+    }
     Ok(())
 }
 
 pub(crate) fn balances_in(
-    conn: &Connection, user: &str, end: Option<&str>,
+    conn: &Connection,
+    user: &str,
+    end: Option<&str>,
 ) -> Result<BTreeMap<String, i128>, rusqlite::Error> {
-    let mut accounts = conn.prepare("SELECT a.id,a.initial_balance,
+    let mut accounts = conn.prepare(
+        "SELECT a.id,a.initial_balance,
         CASE WHEN ?2 IS NULL OR d.cutoff_date IS NULL OR d.cutoff_date<=?2 THEN 1 ELSE 0 END
         FROM finance_accounts a LEFT JOIN catalog_details d
-        ON d.user_id=a.user_id AND d.entity='account' AND d.id=a.id WHERE a.user_id=?1")?;
-    let mut balances = accounts.query_map(params![user,end], |row| {
-        let included:bool=row.get(2)?;
-        let initial: i64=row.get(1)?;
-        Ok((row.get::<_,String>(0)?, if included { i128::from(initial) } else { 0 }))
-    })?.collect::<Result<BTreeMap<_,_>,_>>()?;
-    let mut postings = conn.prepare("SELECT account_id,delta FROM finance_balance_postings
-        WHERE user_id=?1 AND (?2 IS NULL OR date<=?2)")?;
-    for row in postings.query_map(params![user,end],|row| Ok((row.get::<_,String>(0)?,row.get::<_,i64>(1)?)))? {
-        let (id,delta)=row?;
-        *balances.get_mut(&id).ok_or(rusqlite::Error::InvalidQuery)?+=i128::from(delta);
+        ON d.user_id=a.user_id AND d.entity='account' AND d.id=a.id WHERE a.user_id=?1",
+    )?;
+    let mut balances = accounts
+        .query_map(params![user, end], |row| {
+            let included: bool = row.get(2)?;
+            let initial: i64 = row.get(1)?;
+            Ok((
+                row.get::<_, String>(0)?,
+                if included { i128::from(initial) } else { 0 },
+            ))
+        })?
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let mut postings = conn.prepare(
+        "SELECT account_id,delta FROM finance_balance_postings
+        WHERE user_id=?1 AND (?2 IS NULL OR date<=?2)",
+    )?;
+    for row in postings.query_map(params![user, end], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
+    })? {
+        let (id, delta) = row?;
+        *balances.get_mut(&id).ok_or(rusqlite::Error::InvalidQuery)? += i128::from(delta);
     }
     Ok(balances)
 }
 
 pub(crate) fn changed(conn: &Connection, user: &str, entity: &str, id: &str) -> Result<(), Error> {
-    conn.execute("INSERT OR REPLACE INTO finance_changes(user_id,entity,id) VALUES(?1,?2,?3)", params![user,entity,id])?;
+    conn.execute(
+        "INSERT OR REPLACE INTO finance_changes(user_id,entity,id) VALUES(?1,?2,?3)",
+        params![user, entity, id],
+    )?;
     Ok(())
 }
-pub(crate) fn write<T>(db: &Database, action: impl FnOnce(&Connection) -> Result<T, Error>) -> Result<T,Error> {
+pub(crate) fn write<T>(
+    db: &Database,
+    action: impl FnOnce(&Connection) -> Result<T, Error>,
+) -> Result<T, Error> {
     let mut conn = db.0.lock().map_err(|_| Error::Database)?;
     let tx = conn.transaction()?;
     let result = action(&tx)?;
@@ -145,12 +171,12 @@ pub(crate) fn write<T>(db: &Database, action: impl FnOnce(&Connection) -> Result
     Ok(result)
 }
 pub fn save_account(db: &Database, user: &str, value: &Account) -> Result<(), Error> {
-    write(db, |tx| save_account_in(tx,user,value))
+    write(db, |tx| save_account_in(tx, user, value))
 }
 pub(crate) fn save_account_in(tx: &Connection, user: &str, value: &Account) -> Result<(), Error> {
-    upsert_account_in(tx,user,value)?;
-    validate_balance(tx, user,&value.id)?;
-    changed(tx,user,"account",&value.id)
+    upsert_account_in(tx, user, value)?;
+    validate_balance(tx, user, &value.id)?;
+    changed(tx, user, "account", &value.id)
 }
 pub(crate) fn upsert_account_in(tx: &Connection, user: &str, value: &Account) -> Result<(), Error> {
     if !id_ok(&value.id)
@@ -174,9 +200,13 @@ pub(crate) fn upsert_account_in(tx: &Connection, user: &str, value: &Account) ->
     Ok(())
 }
 pub fn save_category(db: &Database, user: &str, value: &Category) -> Result<(), Error> {
-    write(db, |tx| save_category_in(tx,user,value))
+    write(db, |tx| save_category_in(tx, user, value))
 }
-pub(crate) fn save_category_in(conn: &rusqlite::Connection, user: &str, value: &Category) -> Result<(), Error> {
+pub(crate) fn save_category_in(
+    conn: &rusqlite::Connection,
+    user: &str,
+    value: &Category,
+) -> Result<(), Error> {
     if !id_ok(&value.id)
         || !name_ok(&value.name)
         || !["income", "expense"].contains(&value.kind.as_str())
@@ -194,7 +224,7 @@ pub(crate) fn save_category_in(conn: &rusqlite::Connection, user: &str, value: &
         return Err(Error::Invalid);
     }
     conn.execute("INSERT INTO finance_categories VALUES(?1,?2,?3,?4) ON CONFLICT(user_id,id) DO UPDATE SET name=excluded.name",params![user,value.id,value.name,value.kind])?;
-    changed(conn,user,"category",&value.id)
+    changed(conn, user, "category", &value.id)
 }
 pub(crate) fn valid_date(s: &str) -> bool {
     let b = s.as_bytes();
@@ -224,22 +254,37 @@ fn optional_text_ok(s: &Option<String>, max: usize) -> bool {
         .is_none_or(|v| v.len() <= max && !v.chars().any(|c| c.is_control() && c != '\n'))
 }
 pub fn apply(db: &Database, user: &str, c: &Change) -> Result<Outcome, Error> {
-    if c.id.starts_with("loan:") || matches!(c.kind.as_deref(), Some("loan_draw" | "loan_repayment")) {
+    if c.id.starts_with("loan:")
+        || matches!(c.kind.as_deref(), Some("loan_draw" | "loan_repayment"))
+    {
         return Err(Error::Invalid);
     }
-    write(db, |tx| apply_in(tx,user,c))
+    write(db, |tx| apply_in(tx, user, c))
 }
-pub(crate) fn apply_in(tx: &rusqlite::Connection, user: &str, c: &Change) -> Result<Outcome, Error> {
-    apply_change(tx,user,c,false)
+pub(crate) fn apply_in(
+    tx: &rusqlite::Connection,
+    user: &str,
+    c: &Change,
+) -> Result<Outcome, Error> {
+    apply_change(tx, user, c, false)
 }
-pub(crate) fn apply_import_in(tx: &Connection, user: &str, change: &Change) -> Result<Outcome, Error> {
+pub(crate) fn apply_import_in(
+    tx: &Connection,
+    user: &str,
+    change: &Change,
+) -> Result<Outcome, Error> {
     if change.id.starts_with("loan:") {
         return Err(Error::Invalid);
     }
-    apply_change(tx,user,change,true)
+    apply_change(tx, user, change, true)
 }
 
-fn apply_change(tx: &Connection, user: &str, c: &Change, importing: bool) -> Result<Outcome, Error> {
+fn apply_change(
+    tx: &Connection,
+    user: &str,
+    c: &Change,
+    importing: bool,
+) -> Result<Outcome, Error> {
     if !id_ok(&c.id)
         || !id_ok(&c.request_id)
         || c.expected_version < 0
@@ -299,20 +344,40 @@ fn apply_change(tx: &Connection, user: &str, c: &Change, importing: bool) -> Res
             )
             .optional()?;
         let account_kind = account_kind.ok_or(Error::Invalid)?;
-        if (c.destination_account_id.is_some() && kind != "transfer") || (c.original_operation_id.is_some() && kind != "refund") {
+        if (c.destination_account_id.is_some() && kind != "transfer")
+            || (c.original_operation_id.is_some() && kind != "refund")
+        {
             return Err(Error::Invalid);
         }
         match kind.as_str() {
             "transfer" => {
                 let dest = c.destination_account_id.as_ref().ok_or(Error::Invalid)?;
                 let eligible: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM finance_accounts WHERE user_id=?1 AND id=?2 AND kind!='card')",params![user,dest], |r| r.get(0))?;
-                if !eligible || dest == &account_id || account_kind == "card" || c.category_id.is_some() || c.card_account_id.is_some() {return Err(Error::Invalid);}
+                if !eligible
+                    || dest == &account_id
+                    || account_kind == "card"
+                    || c.category_id.is_some()
+                    || c.card_account_id.is_some()
+                {
+                    return Err(Error::Invalid);
+                }
             }
             "refund" => {
-                if c.original_operation_id.is_none() || c.category_id.is_none() || c.card_account_id.is_some() {return Err(Error::Invalid);}
+                if c.original_operation_id.is_none()
+                    || c.category_id.is_none()
+                    || c.card_account_id.is_some()
+                {
+                    return Err(Error::Invalid);
+                }
             }
             "loan_draw" | "loan_repayment" => {
-                if (!importing && !c.id.starts_with("loan:")) || account_kind == "card" || c.category_id.is_some() || c.card_account_id.is_some() {return Err(Error::Invalid);}
+                if (!importing && !c.id.starts_with("loan:"))
+                    || account_kind == "card"
+                    || c.category_id.is_some()
+                    || c.card_account_id.is_some()
+                {
+                    return Err(Error::Invalid);
+                }
             }
             "income" | "expense" => {
                 if c.card_account_id.is_some() {
@@ -357,8 +422,8 @@ fn apply_change(tx: &Connection, user: &str, c: &Change, importing: bool) -> Res
             account_id,
             category_id: c.category_id.clone(),
             card_account_id: c.card_account_id.clone(),
-            destination_account_id:c.destination_account_id.clone(),
-            original_operation_id:c.original_operation_id.clone(),
+            destination_account_id: c.destination_account_id.clone(),
+            original_operation_id: c.original_operation_id.clone(),
             amount,
             date,
             description: c.description.clone(),
@@ -366,19 +431,39 @@ fn apply_change(tx: &Connection, user: &str, c: &Change, importing: bool) -> Res
         }
     };
     let op = &operation;
-    if op.kind=="refund" && !op.deleted {
+    if op.kind == "refund" && !op.deleted {
         let exists: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM finance_operations WHERE user_id=?1 AND id=?2 AND kind='expense' AND deleted=0)",params![user,op.original_operation_id], |r|r.get(0))?;
-        if !exists { return Err(Error::Invalid); }
+        if !exists {
+            return Err(Error::Invalid);
+        }
     }
     if !importing && !op.deleted {
         for (entity, id, previous) in [
-            ("account", Some(op.account_id.as_str()), current.as_ref().map(|o| o.account_id.as_str())),
-            ("account", op.card_account_id.as_deref(), current.as_ref().and_then(|o| o.card_account_id.as_deref())),
-            ("account", op.destination_account_id.as_deref(), current.as_ref().and_then(|o| o.destination_account_id.as_deref())),
-            ("category", op.category_id.as_deref(), current.as_ref().and_then(|o| o.category_id.as_deref())),
+            (
+                "account",
+                Some(op.account_id.as_str()),
+                current.as_ref().map(|o| o.account_id.as_str()),
+            ),
+            (
+                "account",
+                op.card_account_id.as_deref(),
+                current.as_ref().and_then(|o| o.card_account_id.as_deref()),
+            ),
+            (
+                "account",
+                op.destination_account_id.as_deref(),
+                current
+                    .as_ref()
+                    .and_then(|o| o.destination_account_id.as_deref()),
+            ),
+            (
+                "category",
+                op.category_id.as_deref(),
+                current.as_ref().and_then(|o| o.category_id.as_deref()),
+            ),
         ] {
-            if let Some(id)=id.filter(|_| entity!="category" || op.kind!="refund") {
-                if Some(id)!=previous && catalog::is_archived(tx,user,entity,id)? {
+            if let Some(id) = id.filter(|_| entity != "category" || op.kind != "refund") {
+                if Some(id) != previous && catalog::is_archived(tx, user, entity, id)? {
                     return Err(Error::Invalid);
                 }
             }
@@ -396,7 +481,9 @@ fn apply_change(tx: &Connection, user: &str, c: &Change, importing: bool) -> Res
             (r.account_id!=e.account_id AND EXISTS(SELECT 1 FROM finance_accounts a WHERE a.user_id=r.user_id AND a.id=r.account_id AND a.kind='card'))
             OR r.category_id IS NOT e.category_id))",
         params![user,op.id,op.original_operation_id], |r|r.get(0))?;
-    if invalid_refunds {return Err(Error::Invalid);}
+    if invalid_refunds {
+        return Err(Error::Invalid);
+    }
     let mut touched = std::collections::BTreeSet::new();
     for row in current.iter().chain(std::iter::once(op)) {
         touched.insert(&row.account_id);
@@ -404,9 +491,11 @@ fn apply_change(tx: &Connection, user: &str, c: &Change, importing: bool) -> Res
         touched.extend(row.destination_account_id.iter());
     }
     if !importing {
-        for id in touched { validate_balance(tx,user,id)?; }
+        for id in touched {
+            validate_balance(tx, user, id)?;
+        }
     }
-    changed(tx,user,"operation",&op.id)?;
+    changed(tx, user, "operation", &op.id)?;
     let outcome = Outcome::Applied(operation);
     let response = serde_json::to_string(&outcome).map_err(|_| Error::Database)?;
     tx.execute(
@@ -416,20 +505,47 @@ fn apply_change(tx: &Connection, user: &str, c: &Change, importing: bool) -> Res
     Ok(outcome)
 }
 pub fn snapshot(db: &Database, user: &str) -> Result<Snapshot, Error> {
-    snapshot_since(db,user,None,None)
+    snapshot_since(db, user, None, None)
 }
-pub fn snapshot_since(db: &Database, user: &str, since: Option<i64>, epoch: Option<&str>) -> Result<Snapshot, Error> {
+pub fn snapshot_since(
+    db: &Database,
+    user: &str,
+    since: Option<i64>,
+    epoch: Option<&str>,
+) -> Result<Snapshot, Error> {
     let conn = db.0.lock().map_err(|_| Error::Database)?;
-    let current_epoch: String = conn.query_row("SELECT id FROM sync_epoch", [], |r|r.get(0))?;
-    let cursor = conn.query_row("SELECT COALESCE(MAX(seq),0) FROM finance_changes WHERE user_id=?1",[user], |r|r.get::<_,i64>(0))?;
-    let after = since.filter(|n| (0..=cursor).contains(n) && epoch==Some(&current_epoch));
-    fn selection(table: &str, entity: &str, fields: &str, order: &str, incremental: bool) -> String {
-        let filter = if incremental {format!(" AND id IN (SELECT id FROM finance_changes WHERE user_id=?1 AND entity='{entity}' AND seq>?2)")} else {" AND ?2 IS NULL".into()};
+    let current_epoch: String = conn.query_row("SELECT id FROM sync_epoch", [], |r| r.get(0))?;
+    let cursor = conn.query_row(
+        "SELECT COALESCE(MAX(seq),0) FROM finance_changes WHERE user_id=?1",
+        [user],
+        |r| r.get::<_, i64>(0),
+    )?;
+    let after = since.filter(|n| (0..=cursor).contains(n) && epoch == Some(&current_epoch));
+    fn selection(
+        table: &str,
+        entity: &str,
+        fields: &str,
+        order: &str,
+        incremental: bool,
+    ) -> String {
+        let filter = if incremental {
+            format!(
+                " AND id IN (SELECT id FROM finance_changes WHERE user_id=?1 AND entity='{entity}' AND seq>?2)"
+            )
+        } else {
+            " AND ?2 IS NULL".into()
+        };
         format!("SELECT {fields} FROM {table} WHERE user_id=?1 {filter} ORDER BY {order}")
     }
-    let mut stmt=conn.prepare(&selection("finance_accounts","account","id,name,kind,initial_balance","name,id",after.is_some()))?;
+    let mut stmt = conn.prepare(&selection(
+        "finance_accounts",
+        "account",
+        "id,name,kind,initial_balance",
+        "name,id",
+        after.is_some(),
+    ))?;
     let accounts = stmt
-        .query_map(params![user,after], |r| {
+        .query_map(params![user, after], |r| {
             Ok(Account {
                 id: r.get(0)?,
                 name: r.get(1)?,
@@ -438,9 +554,15 @@ pub fn snapshot_since(db: &Database, user: &str, since: Option<i64>, epoch: Opti
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    let mut stmt = conn.prepare(&selection("finance_categories","category","id,name,kind","name,id",after.is_some()))?;
+    let mut stmt = conn.prepare(&selection(
+        "finance_categories",
+        "category",
+        "id,name,kind",
+        "name,id",
+        after.is_some(),
+    ))?;
     let categories = stmt
-        .query_map(params![user,after], |r| {
+        .query_map(params![user, after], |r| {
             Ok(Category {
                 id: r.get(0)?,
                 name: r.get(1)?,
@@ -448,18 +570,25 @@ pub fn snapshot_since(db: &Database, user: &str, since: Option<i64>, epoch: Opti
             })
         })?
         .collect::<Result<Vec<_>, _>>()?;
-    let mut stmt =
-        conn.prepare(&selection("finance_operations","operation","data","id",after.is_some()))?;
+    let mut stmt = conn.prepare(&selection(
+        "finance_operations",
+        "operation",
+        "data",
+        "id",
+        after.is_some(),
+    ))?;
     let rows = stmt
-        .query_map(params![user,after], |r| r.get::<_, String>(0))?
+        .query_map(params![user, after], |r| r.get::<_, String>(0))?
         .collect::<Result<Vec<_>, _>>()?;
     let operations = rows
         .into_iter()
         .map(|s| serde_json::from_str(&s).map_err(|_| Error::Database))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(Snapshot {
-        catalog_details:crate::catalog::list_in(&conn,user,after)?,
-        cursor,epoch:current_epoch,incremental:after.is_some(),
+        catalog_details: crate::catalog::list_in(&conn, user, after)?,
+        cursor,
+        epoch: current_epoch,
+        incremental: after.is_some(),
         accounts,
         categories,
         operations,
@@ -483,23 +612,34 @@ pub(crate) fn bound_user(db: &Database, h: &HeaderMap) -> Result<auth::User, Sta
     Ok(user)
 }
 #[derive(Deserialize)]
-struct SnapshotQuery { since: Option<i64>, epoch: Option<String> }
-async fn get_snapshot(State(s): State<AppState>, Query(query): Query<SnapshotQuery>, h: HeaderMap) -> Response {
+struct SnapshotQuery {
+    since: Option<i64>,
+    epoch: Option<String>,
+}
+async fn get_snapshot(
+    State(s): State<AppState>,
+    Query(query): Query<SnapshotQuery>,
+    h: HeaderMap,
+) -> Response {
     let u = match bound_user(&s.db, &h) {
         Ok(u) => u,
         Err(e) => return e.into_response(),
     };
-    match snapshot_since(&s.db, &u.id,query.since,query.epoch.as_deref()) {
+    match snapshot_since(&s.db, &u.id, query.since, query.epoch.as_deref()) {
         Ok(v) => Json(v).into_response(),
         Err(e) => fail(e),
     }
 }
-async fn post_account(State(s): State<AppState>, h: HeaderMap, Json(mut input): Json<catalog::AccountInput>) -> Response {
+async fn post_account(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Json(mut input): Json<catalog::AccountInput>,
+) -> Response {
     let u = match bound_user(&s.db, &h) {
         Ok(u) => u,
         Err(e) => return e.into_response(),
     };
-    match write(&s.db, |tx| catalog::save_account(tx,&u.id,&mut input)) {
+    match write(&s.db, |tx| catalog::save_account(tx, &u.id, &mut input)) {
         Ok(()) => Json(input.account).into_response(),
         Err(e) => fail(e),
     }

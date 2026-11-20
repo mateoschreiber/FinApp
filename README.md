@@ -2,7 +2,15 @@
 
 Aplicación de finanzas personales con servidor Rust, SQLite y una interfaz web pensada para dispositivos móviles y escritorio. El diseño y los límites de la primera fase están en [la especificación](docs/superpowers/specs/2026-11-14-misfinanzas-fase-1-design.md).
 
-**Estado de validación:** se probaron las reglas y la sincronización con datos temporales, incluido un recorrido de navegador con el servidor desconectado. La imagen Docker, el HTTPS del NAS, la restauración de un respaldo y la instalación en Android aún deben verificarse en el entorno de destino. No uses datos financieros reales hasta completar esas comprobaciones.
+## Uso
+
+1. Después de iniciar sesión, elige **Crear mi primera cuenta**. Agrega efectivo, banco, billetera o tarjeta. Al indicar una fecha de corte, carga el saldo al inicio de ese día. Los movimientos previos siguen visibles en el historial.
+2. Crea una categoría o elige las sugeridas en **Configuración**. Registra ingresos, gastos, transferencias y pagos de tarjeta desde **Nuevo movimiento**. Para un reintegro, selecciona el gasto original y la cuenta que recibe el dinero.
+3. Usa **Créditos** para compras en cuotas, resúmenes y préstamos. FinApp registra el gasto completo de una compra financiada en la fecha de compra. Consulta cuotas y vencimientos por separado.
+4. En **Planificación**, selecciona un mes para consultar el resultado, el patrimonio y los vencimientos. Allí puedes gestionar presupuestos, recurrentes, objetivos y comprobantes, y marcar el mes como revisado.
+5. En **Importar y exportar**, revisa y confirma un XLSX con las hojas `Cuentas`, `Categorias` y `Movimientos`. La vista previa muestra referencias y diferencias antes de escribir. También puedes conciliar extractos CSV y descargar cuentas, movimientos e informes.
+
+La PWA conserva los movimientos pendientes en el navegador. Si un movimiento se rechaza o entra en conflicto, revisa **Cambios locales** en el resumen. Tras cambiar de dispositivo, sincroniza para descargar las operaciones registradas.
 
 Para trabajar sin conexión, primero inicia sesión y sincroniza en cada dispositivo. La aplicación conserva los movimientos localmente y reintenta mientras está abierta; el botón «Sincronizar ahora» permite volver a intentarlo. El navegador debe admitir IndexedDB, service workers y Web Locks. Si deniega almacenamiento persistente, puede eliminar datos locales bajo presión de almacenamiento: sincroniza con frecuencia. Cerrar sesión requiere conexión y confirma antes de descartar cambios pendientes.
 
@@ -95,6 +103,14 @@ bash scripts/backup.sh "$HOME/finapp-backups"
 
 El script usa `.backup` de SQLite para crear una instantánea coherente incluso con WAL, comprueba `integrity_check` y compara SHA-256 antes y después de copiarla. Publica un archivo `.sqlite` y otro `.sqlite.sha256` con el mismo nombre y muestra su ruta. Una ejecución fallida devuelve un código distinto de cero; revisa el mensaje y corrígelo. No copies solamente el archivo activo de SQLite y no uses una copia sin su correspondiente checksum.
 
+Si FinApp está definido en otro proyecto Compose, indica su directorio, archivos y servicio. En la instalación de `server1` el comando es:
+
+```bash
+FINAPP_COMPOSE_DIR=/srv/media/homelab \
+COMPOSE_FILE=/srv/media/homelab/compose.yaml:/srv/media/homelab/finapp-cloudflare.override.yaml \
+FINAPP_SERVICE=finapp bash scripts/backup.sh "$HOME/respaldos-finapp"
+```
+
 Para ensayar la restauración de un archivo específico, con la imagen `finapp:local` ya construida:
 
 ```bash
@@ -102,6 +118,21 @@ bash scripts/restore-check.sh "$HOME/finapp-backups/EL_ARCHIVO.sqlite"
 ```
 
 El script comprueba el checksum, restaura en un volumen Docker nuevo, verifica `integrity_check` e inicia un contenedor **sin red ni puertos publicados** para consultar `/health`. El volumen y el contenedor temporales se eliminan al terminar; no se modifica el volumen de la aplicación. El ensayo verifica el arranque y la integridad estructural, pero no sustituye revisar manualmente que los movimientos y comprobantes esperados sean los correctos. Para restaurar producción, detén el servicio y conserva una copia previa, incluidos los archivos WAL/SHM; trabaja sobre un volumen nuevo y verifica los datos antes de ponerlo en uso.
+
+Para ensayar con una imagen candidata, define `FINAPP_RESTORE_IMAGE` con su etiqueta.
+
+### Actualizar FinApp en server1
+
+Después de verificar un respaldo de la base actual y ensayar la imagen candidata en una instancia aislada, actualiza el código local y reconstruye solo FinApp:
+
+```bash
+git -C ~/FinApp pull --ff-only
+cd /srv/media/homelab
+docker compose -f compose.yaml -f finapp-cloudflare.override.yaml up -d --build --no-deps finapp
+curl --fail --silent http://127.0.0.1:3000/health
+```
+
+El comando reconstruye desde `~/FinApp` y conserva el volumen `homelab_finapp_data`. Prueba el dominio con tu sesión de Cloudflare Access y comprueba los saldos y la sincronización. Si debes volver a una versión anterior a una migración, ensaya esa imagen con el respaldo anterior y monta el volumen restaurado tras verificarlo.
 
 ### Programar una copia diaria en Ubuntu
 

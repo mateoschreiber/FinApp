@@ -685,7 +685,7 @@ bindForm('account-form',async (input,form) => {
     },
   });
   const first = !view || setupStep(view) === 'account';
-  resetCatalog(form.id);
+  resetCatalog('account-form');
   await synchronize();
   if (first && view && setupStep(view) === 'category') followSetup('category-form','expense');
   notice('Cuenta guardada.');
@@ -695,7 +695,7 @@ bindForm('category-form',async (input,form) => {
   const id = f.id || crypto.randomUUID();
   form.elements.id.value = id;
   await api('/api/categories','POST',{id,name:f.name.trim(),kind:form.elements.kind.value});
-  resetCatalog(form.id);
+  resetCatalog('category-form');
   await synchronize();
   notice('Categoría guardada.');
 });
