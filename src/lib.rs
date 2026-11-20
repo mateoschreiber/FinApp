@@ -5,7 +5,6 @@ pub mod db;
 pub mod exchange;
 pub mod finance;
 pub mod history;
-pub mod ledger;
 pub mod planning;
 pub mod reconciliation;
 

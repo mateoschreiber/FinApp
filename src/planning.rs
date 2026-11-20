@@ -19,6 +19,9 @@ use std::collections::BTreeMap;
 
 const MAX_AMOUNT: i64 = 9_007_199_254_740_991;
 const MAX_FILE: usize = 5 * 1024 * 1024;
+// Receipts live inside SQLite and travel in every backup; a per-user cap keeps
+// both bounded on the NAS volume.
+const MAX_TOTAL_RECEIPTS: i64 = 200 * 1024 * 1024;
 
 #[derive(Debug)]
 pub(crate) enum Error {
@@ -464,6 +467,14 @@ fn store_receipt(conn: &Connection, u: &str, v: Upload) -> Result<String, Error>
     }
     let bytes = hex::decode(&v.content).map_err(|_| Error::Invalid)?;
     if mime(&bytes) != Some(v.mime.as_str()) {
+        return Err(Error::Invalid);
+    }
+    let stored: i64 = conn.query_row(
+        "SELECT COALESCE(SUM(length(content)),0) FROM planning_receipts WHERE user_id=?1",
+        params![u],
+        |r| r.get(0),
+    )?;
+    if stored.saturating_add(i64::try_from(bytes.len()).unwrap_or(i64::MAX)) > MAX_TOTAL_RECEIPTS {
         return Err(Error::Invalid);
     }
     let exists:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM finance_operations WHERE user_id=?1 AND id=?2 AND json_extract(data,'$.deleted')=0)",params![u,v.operation_id],|r|r.get(0))?;

@@ -162,6 +162,14 @@ pub async fn login(State(state): State<AppState>, Json(creds): Json<Credentials>
         Ok(c) => c,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
+    // Login is the one frequent write; piggyback the purge of expired sessions here
+    // so the table only grows with real active sessions.
+    if conn
+        .execute("DELETE FROM sessions WHERE expires_at<=?1", params![now()])
+        .is_err()
+    {
+        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+    }
     if conn
         .execute(
             "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES (?1,?2,?3)",

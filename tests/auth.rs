@@ -481,3 +481,55 @@ async fn logout_requires_user_identity_matching_the_cookie() {
         StatusCode::UNAUTHORIZED
     );
 }
+
+#[tokio::test]
+async fn login_purges_expired_sessions() {
+    use rusqlite::params;
+    let db = Database::open_memory().unwrap();
+    db.bootstrap_admin("alice", "password-1234").unwrap();
+    let handle = db.clone();
+    let app = app(db, "https://finanzas.example".to_owned());
+    let first = request(
+        &app,
+        "POST",
+        "/api/login",
+        r#"{"username":"alice","password":"password-1234"}"#,
+        None,
+    )
+    .await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let user_id: String = {
+        let conn = handle.0.lock().unwrap();
+        conn.query_row("SELECT id FROM users WHERE username='alice'", [], |r| {
+            r.get(0)
+        })
+        .unwrap()
+    };
+    {
+        let conn = handle.0.lock().unwrap();
+        conn.execute(
+            "INSERT INTO sessions(token_hash,user_id,expires_at) VALUES('expired',?1,1)",
+            params![user_id],
+        )
+        .unwrap();
+    }
+    let second = request(
+        &app,
+        "POST",
+        "/api/login",
+        r#"{"username":"alice","password":"password-1234"}"#,
+        None,
+    )
+    .await;
+    assert_eq!(second.status(), StatusCode::OK);
+    let expired: i64 = {
+        let conn = handle.0.lock().unwrap();
+        conn.query_row(
+            "SELECT COUNT(*) FROM sessions WHERE token_hash='expired'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(expired, 0);
+}

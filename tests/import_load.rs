@@ -1,5 +1,4 @@
 use axum::{
-    Router,
     body::Body,
     http::{Request, StatusCode, header},
 };

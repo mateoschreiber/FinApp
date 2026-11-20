@@ -701,7 +701,12 @@ mod tests {
             .unwrap()
             .execute("INSERT INTO users VALUES('u','u','-',0)", [])
             .unwrap();
-        for (id, kind) in [("cash", "cash"), ("wallet", "wallet"), ("visa", "card")] {
+        for (id, kind) in [
+            ("cash", "cash"),
+            ("wallet", "wallet"),
+            ("visa", "card"),
+            ("amex", "card"),
+        ] {
             save_account(
                 &db,
                 "u",
@@ -924,5 +929,68 @@ mod tests {
             json!({"kind":"refund","category_id":"food","amount":10,"date":"2026-10-19","original_operation_id":"expense","account_id":"wallet"}),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn basic_operations_reject_cards_as_payment_source_and_bad_references() {
+        let db = setup();
+        apply_json(
+            &db,
+            "e",
+            "expense",
+            0,
+            json!({"kind":"expense","category_id":"food","amount":10}),
+        )
+        .unwrap();
+
+        // A card cannot be the paying account of a card payment.
+        assert!(matches!(
+            apply_json(
+                &db,
+                "p",
+                "payment",
+                0,
+                json!({"kind":"payment","account_id":"visa","card_account_id":"amex","amount":5,"date":"2026-10-11"}),
+            )
+            .unwrap_err(),
+            Error::Invalid
+        ));
+        // Amounts must be strictly positive.
+        for amount in [0, -5] {
+            assert!(matches!(
+                apply_json(
+                    &db,
+                    &format!("n{amount}"),
+                    &format!("negative-{amount}"),
+                    0,
+                    json!({"kind":"expense","category_id":"food","amount":amount}),
+                )
+                .unwrap_err(),
+                Error::Invalid
+            ));
+        }
+        // Unknown accounts and categories are rejected.
+        assert!(matches!(
+            apply_json(
+                &db,
+                "g",
+                "ghost",
+                0,
+                json!({"kind":"expense","account_id":"missing","category_id":"food","amount":1}),
+            )
+            .unwrap_err(),
+            Error::Invalid
+        ));
+        assert!(matches!(
+            apply_json(
+                &db,
+                "k",
+                "ghost-category",
+                0,
+                json!({"kind":"expense","category_id":"missing","amount":1}),
+            )
+            .unwrap_err(),
+            Error::Invalid
+        ));
     }
 }
