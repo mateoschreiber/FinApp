@@ -83,6 +83,33 @@ async fn security_headers(request: Request<Body>, next: Next) -> Response {
     response
 }
 
+pub fn valid_origin(origin: &str) -> bool {
+    let Ok(uri) = origin.parse::<axum::http::Uri>() else {
+        return false;
+    };
+    let authority = uri.authority().map_or("", |a| a.as_str());
+    let has_port = authority.contains(':') && !authority.ends_with(']');
+    let port_valid = !has_port || uri.port_u16().is_some();
+    let plain = origin == origin.to_ascii_lowercase()
+        && port_valid
+        && uri.authority().is_some()
+        && uri.path() == "/"
+        && uri.query().is_none()
+        && !origin.ends_with('/')
+        && !origin.contains('@')
+        && !origin.contains('#')
+        && !origin.ends_with(':');
+    plain
+        && match uri.scheme_str() {
+            Some("https") => uri.port_u16() != Some(443),
+            Some("http") => {
+                uri.port_u16() != Some(80)
+                    && matches!(uri.host(), Some("localhost" | "127.0.0.1" | "[::1]"))
+            }
+            _ => false,
+        }
+}
+
 pub fn app(db: Database, origin: String) -> Router {
     let state = AppState {
         db,
@@ -109,4 +136,64 @@ pub fn app(db: Database, origin: String) -> Router {
         ))
         .layer(middleware::from_fn(security_headers))
         .with_state(state)
+}
+
+#[cfg(test)]
+mod origin_tests {
+    use super::valid_origin;
+
+    #[test]
+    fn accepts_https_and_loopback_http_origins() {
+        for origin in [
+            "https://finanzas.example",
+            "https://finanzas.example:8443",
+            "https://[2001:db8::1]:8443",
+            "http://localhost",
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+            "http://[::1]:3000",
+        ] {
+            assert!(valid_origin(origin), "{origin}");
+        }
+    }
+
+    #[test]
+    fn rejects_http_outside_loopback() {
+        for origin in [
+            "http://192.168.1.10:3000",
+            "http://10.0.0.5",
+            "http://8.8.8.8",
+            "http://127.0.0.2:3000",
+            "http://0.0.0.0:3000",
+            "http://[::2]:3000",
+            "http://finanzas.example",
+            "http://localhost.evil.example:3000",
+        ] {
+            assert!(!valid_origin(origin), "{origin}");
+        }
+    }
+
+    #[test]
+    fn rejects_malformed_or_non_canonical_origins() {
+        for origin in [
+            "",
+            "localhost:3000",
+            "ftp://localhost",
+            "https://",
+            "https://finanzas.example/",
+            "https://finanzas.example/path",
+            "https://finanzas.example?x=1",
+            "https://finanzas.example#frag",
+            "https://user:pass@finanzas.example",
+            "http://user@localhost:3000",
+            "HTTPS://finanzas.example",
+            "https://Finanzas.example",
+            "https://finanzas.example:443",
+            "http://localhost:80",
+            "http://localhost:",
+            "http://localhost:99999",
+        ] {
+            assert!(!valid_origin(origin), "{origin}");
+        }
+    }
 }

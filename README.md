@@ -41,7 +41,9 @@ FINAPP_ORIGIN=https://finanzas.tudominio.com
 
 La dirección debe coincidir exactamente con la del navegador, incluyendo el puerto si no es el predeterminado y sin barra final. Compose usa este archivo cada vez que ejecutas sus comandos; el archivo está excluido de Git. Si la misma variable existe en tu terminal, tiene prioridad sobre `.env`.
 
-Para probar solo en este equipo puedes usar `FINAPP_ORIGIN=http://localhost:3000`. Hoy el servidor acepta `http://` o `https://` con cualquier host y no comprueba que HTTP sea local; esa restricción está prevista en F8.3. Con HTTP, la cookie de sesión lleva `Secure`, y según la especificación el navegador solo la envía en `localhost` y `127.0.0.1`. No se ha verificado en un navegador en esta fase.
+Para probar solo en este equipo puedes usar `FINAPP_ORIGIN=http://localhost:3000`. El servidor solo acepta `http://` para `localhost`, `127.0.0.1` y `[::1]`; cualquier otra dirección HTTP (IP de la red local, IP pública o dominio) se rechaza al arrancar. El origen debe escribirse como lo envía el navegador: en minúsculas, sin ruta, sin credenciales, sin fragmento y sin puerto por defecto (`:80` o `:443`).
+
+Con HTTP, la cookie de sesión lleva `Secure`. Según MDN, los navegadores solo la envían sobre HTTP en `localhost`, y Safari no admite esa excepción. Verificado en Chrome: login, cookie `HttpOnly` no legible desde JavaScript y `/api/me` autenticado. No verificado en Firefox. En Safari, usa HTTPS.
 
 En la primera ejecución crea el administrador. El nombre es un ejemplo y la contraseña debe tener al menos 12 caracteres. Bash solicita la contraseña sin mostrarla en pantalla:
 

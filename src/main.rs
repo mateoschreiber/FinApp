@@ -1,4 +1,4 @@
-use finapp::{app, db::Database};
+use finapp::{app, db::Database, valid_origin};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -13,17 +13,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     let bind = std::env::var("FINAPP_BIND").unwrap_or_else(|_| "127.0.0.1:3000".into());
     let origin = std::env::var("FINAPP_ORIGIN").map_err(|_| "FINAPP_ORIGIN is required")?;
-    let uri: axum::http::Uri = origin.parse()?;
-    if !matches!(uri.scheme_str(), Some("http" | "https"))
-        || uri.authority().is_none()
-        || uri.path() != "/"
-        || origin.ends_with('/')
-        || origin.contains('@')
-        || uri.query().is_some()
-    {
-        return Err(
-            "FINAPP_ORIGIN must be an HTTP or HTTPS origin without a path or trailing slash".into(),
-        );
+    if !valid_origin(&origin) {
+        return Err("FINAPP_ORIGIN must be https://host, or http://localhost, http://127.0.0.1 or http://[::1] (lowercase, no path, query, credentials or default port)".into());
     }
     let listener = tokio::net::TcpListener::bind(bind).await?;
     axum::serve(listener, app(db, origin)).await?;
