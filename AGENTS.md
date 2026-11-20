@@ -1,0 +1,79 @@
+# Instrucciones para agentes
+
+## Rama de trabajo
+
+- Todo el trabajo se hace en `main`.
+- No crees ramas nuevas ni trabajes en otras ramas (por ejemplo `estabilizacion-ux`, `feat/*` o `codex/*`).
+- No hagas `git push` sin autorización explícita del usuario.
+- Las credenciales siempre deben ser admin:admin
+
+
+# AGENTS.md
+
+## Purpose
+Repository-level instructions for AI coding agents.
+Follow existing project conventions and preserve working behavior.
+
+## Source of Truth
+- Current source code and tests take precedence over outdated documentation.
+- Read README.md for initial setup when needed.
+- Read docs/architecture.md when changing component boundaries.
+- Read docs/database.md when changing persistence or migrations.
+- Read docs/deployment.md when changing infrastructure.
+- Do not load unrelated documentation.
+
+## Working Principles
+- Inspect the relevant implementation and adjacent tests first.
+- Reuse existing utilities, patterns, and dependencies.
+- Implement the complete requested behavior.
+- Keep changes focused; avoid unrelated refactoring.
+- Expand investigation when evidence is insufficient.
+- Do not add production dependencies without justification.
+- Use `chrome-devtools` only when a task needs real browser evidence. Do not use `browse`.
+
+## Safety
+- Never expose secrets, credentials, or environment values.
+- Never delete production data or reset databases.
+- Never rewrite previously applied migrations.
+- Preserve public API compatibility unless explicitly requested.
+- Do not modify unrelated user changes.
+- Do not push, deploy, or publish without authorization.
+
+## Implementation
+- Prefer small, reviewable changes.
+- Preserve established architectural boundaries.
+- Handle errors explicitly.
+- Add or update regression tests for behavior changes.
+- Do not replace working implementations with placeholders.
+- Keep existing services operational during migrations.
+
+## Verification
+- Run focused checks during implementation.
+- For Rust changes, use relevant Cargo tests and Clippy.
+- For TypeScript changes, use existing package scripts.
+- Run broader checks for cross-module changes.
+- Check the final diff for unrelated modifications.
+- Report commands actually executed and their results.
+- Never claim tests passed unless they were executed.
+
+## Documentation
+- Update documentation when public behavior changes.
+- Keep architecture diagrams aligned with actual components.
+- Document new environment variables and API contracts.
+- Avoid regenerating unrelated documentation.
+- Keep AGENTS.md concise and update it only for durable rules.
+
+## Definition of Done
+A task is complete when:
+- Requested behavior is implemented.
+- Relevant checks pass or blockers are reported.
+- Existing compatibility is preserved where required.
+- Necessary documentation is current.
+- No unrelated changes remain in the diff.
+
+## Final Report
+Summarize:
+- What changed and why.
+- Validation performed.
+- Remaining risks or limitations.
+- Any required user action.

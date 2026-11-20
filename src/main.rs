@@ -14,7 +14,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let bind = std::env::var("FINAPP_BIND").unwrap_or_else(|_| "127.0.0.1:3000".into());
     let origin = std::env::var("FINAPP_ORIGIN").map_err(|_| "FINAPP_ORIGIN is required")?;
     let uri: axum::http::Uri = origin.parse()?;
-    if uri.scheme_str() != Some("https")
+    if !matches!(uri.scheme_str(), Some("http" | "https"))
         || uri.authority().is_none()
         || uri.path() != "/"
         || origin.ends_with('/')
@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         || uri.query().is_some()
     {
         return Err(
-            "FINAPP_ORIGIN must be an HTTPS origin without a path or trailing slash".into(),
+            "FINAPP_ORIGIN must be an HTTP or HTTPS origin without a path or trailing slash".into(),
         );
     }
     let listener = tokio::net::TcpListener::bind(bind).await?;
