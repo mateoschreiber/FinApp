@@ -59,9 +59,9 @@ fn parse_csv(csv: &str) -> Result<Vec<InputLine>> {
     }
     let content = csv.trim_start_matches('\u{feff}');
     // Try each delimiter on the actual header so quoted delimiters in a header remain valid.
-    for delimiter in [b',', b';', b'\t'] {
+    for delimiter in b",;\t" {
         let mut reader = csv::ReaderBuilder::new()
-            .delimiter(delimiter)
+            .delimiter(*delimiter)
             .trim(csv::Trim::All)
             .from_reader(content.as_bytes());
         let names: Vec<_> = reader
