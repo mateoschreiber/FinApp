@@ -32,12 +32,21 @@ Follow existing project conventions and preserve working behavior.
 - Use `chrome-devtools` only when a task needs real browser evidence. Do not use `browse`.
 
 ## Safety
-- Never expose secrets, credentials, or environment values.
 - Never delete production data or reset databases.
 - Never rewrite previously applied migrations.
 - Preserve public API compatibility unless explicitly requested.
 - Do not modify unrelated user changes.
 - Do not push, deploy, or publish without authorization.
+
+## Secrets and Credentials
+
+- Never expose production secrets, private credentials, API keys, session tokens, or sensitive environment values.
+- Documented default bootstrap credentials are permitted for development and initial setup only.
+- Never assume default bootstrap credentials are safe for production.
+- Never log passwords, authentication cookies, access tokens, or session identifiers.
+- Never commit real credentials, private keys, or production environment files.
+- Never overwrite or reset credentials belonging to existing users.
+- Use environment variables or an appropriate secret-management mechanism for production credentials.
 
 ## Implementation
 - Prefer small, reviewable changes.
