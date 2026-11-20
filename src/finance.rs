@@ -480,7 +480,7 @@ fn apply_change(
         params![user,op.id,op.version,op.deleted,op.kind,op.account_id,op.category_id,op.card_account_id,op.destination_account_id,op.original_operation_id,op.amount,op.date,op.description,op.notes])?;
     let invalid_refunds: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM finance_operations r JOIN finance_operations e ON e.user_id=r.user_id AND e.id=r.original_operation_id
         WHERE r.user_id=?1 AND r.deleted=0 AND (e.id=?2 OR e.id=?3) GROUP BY e.id
-        HAVING TOTAL(r.amount)>e.amount OR MAX(e.deleted OR e.kind!='expense' OR r.date<e.date OR
+        HAVING SUM(r.amount)>e.amount OR MAX(e.deleted OR e.kind!='expense' OR r.date<e.date OR
             (r.account_id!=e.account_id AND EXISTS(SELECT 1 FROM finance_accounts a WHERE a.user_id=r.user_id AND a.id=r.account_id AND a.kind='card'))
             OR r.category_id IS NOT e.category_id))",
         params![user,op.id,op.original_operation_id], |r|r.get(0))?;
@@ -688,4 +688,241 @@ pub fn routes() -> Router<AppState> {
         .route("/api/accounts", post(post_account))
         .route("/api/categories", post(post_category))
         .route("/api/operations", post(post_operation))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{Value, json};
+
+    fn setup() -> Database {
+        let db = Database::open_memory().unwrap();
+        db.0.lock()
+            .unwrap()
+            .execute("INSERT INTO users VALUES('u','u','-',0)", [])
+            .unwrap();
+        for (id, kind) in [("cash", "cash"), ("wallet", "wallet"), ("visa", "card")] {
+            save_account(
+                &db,
+                "u",
+                &Account {
+                    id: id.into(),
+                    name: id.into(),
+                    kind: kind.into(),
+                    initial_balance: 0,
+                },
+            )
+            .unwrap();
+        }
+        for id in ["food", "other"] {
+            save_category(
+                &db,
+                "u",
+                &Category {
+                    id: id.into(),
+                    name: id.into(),
+                    kind: "expense".into(),
+                },
+            )
+            .unwrap();
+        }
+        db
+    }
+
+    fn apply_json(
+        db: &Database,
+        request: &str,
+        id: &str,
+        version: i64,
+        mut extra: Value,
+    ) -> Result<Outcome, Error> {
+        let mut value = json!({
+            "request_id": request, "id": id, "expected_version": version, "deleted": false,
+            "account_id": "cash", "date": "2026-10-10",
+        });
+        if let Some(map) = extra.as_object_mut() {
+            for (key, item) in map {
+                value[key] = item.take();
+            }
+        }
+        let change: Change = serde_json::from_value(value).unwrap();
+        apply(db, "u", &change)
+    }
+
+    #[test]
+    fn refunds_are_capped_by_their_expense_and_follow_its_account_rules() {
+        let db = setup();
+        apply_json(
+            &db,
+            "e",
+            "expense",
+            0,
+            json!({"kind":"expense","category_id":"food","amount":500}),
+        )
+        .unwrap();
+
+        // Partial refund on the expense account applies.
+        apply_json(
+            &db,
+            "r1",
+            "refund-1",
+            0,
+            json!({"kind":"refund","category_id":"food","amount":200,"date":"2026-10-15","original_operation_id":"expense"}),
+        )
+        .unwrap();
+        // Accumulated refunds may reach the original amount exactly.
+        apply_json(
+            &db,
+            "r2",
+            "refund-2",
+            0,
+            json!({"kind":"refund","category_id":"food","amount":300,"date":"2026-10-16","original_operation_id":"expense"}),
+        )
+        .unwrap();
+        // One guaraní beyond the original is rejected.
+        assert!(matches!(
+            apply_json(
+                &db,
+                "r3",
+                "refund-3",
+                0,
+                json!({"kind":"refund","category_id":"food","amount":1,"date":"2026-10-17","original_operation_id":"expense"}),
+            )
+            .unwrap_err(),
+            Error::Invalid
+        ));
+        // A refund dated before the expense is rejected.
+        assert!(matches!(
+            apply_json(
+                &db,
+                "r4",
+                "refund-4",
+                0,
+                json!({"kind":"refund","category_id":"food","amount":10,"date":"2026-10-09","original_operation_id":"expense"}),
+            )
+            .unwrap_err(),
+            Error::Invalid
+        ));
+        // The expense cannot shrink below its refunds or be deleted while they exist.
+        assert!(matches!(
+            apply_json(
+                &db,
+                "e2",
+                "expense",
+                1,
+                json!({"kind":"expense","category_id":"food","amount":100}),
+            )
+            .unwrap_err(),
+            Error::Invalid
+        ));
+        let mut delete = json!({"kind":"expense","category_id":"food","amount":500});
+        delete["deleted"] = Value::Bool(true);
+        assert!(matches!(
+            apply_json(&db, "e3", "expense", 1, delete).unwrap_err(),
+            Error::Invalid
+        ));
+        // A refund on a different card account is rejected.
+        assert!(matches!(
+            apply_json(
+                &db,
+                "r5",
+                "refund-5",
+                0,
+                json!({"kind":"refund","category_id":"food","amount":10,"date":"2026-10-18","original_operation_id":"expense","account_id":"visa"}),
+            )
+            .unwrap_err(),
+            Error::Invalid
+        ));
+    }
+
+    #[test]
+    fn refunds_require_a_live_matching_expense_and_safe_amounts() {
+        let db = setup();
+        apply_json(
+            &db,
+            "e",
+            "expense",
+            0,
+            json!({"kind":"expense","category_id":"food","amount":500}),
+        )
+        .unwrap();
+        apply_json(
+            &db,
+            "r",
+            "refund",
+            0,
+            json!({"kind":"refund","category_id":"food","amount":100,"date":"2026-10-15","original_operation_id":"expense"}),
+        )
+        .unwrap();
+
+        // Only an expense can be refunded, never another refund.
+        assert!(matches!(
+            apply_json(
+                &db,
+                "r2",
+                "refund-2",
+                0,
+                json!({"kind":"refund","category_id":"food","amount":10,"date":"2026-10-16","original_operation_id":"refund"}),
+            )
+            .unwrap_err(),
+            Error::Invalid
+        ));
+        // The refund category must be the expense category.
+        assert!(matches!(
+            apply_json(
+                &db,
+                "r3",
+                "refund-3",
+                0,
+                json!({"kind":"refund","category_id":"other","amount":10,"date":"2026-10-16","original_operation_id":"expense"}),
+            )
+            .unwrap_err(),
+            Error::Invalid
+        ));
+        // Refunds never carry a card of their own.
+        assert!(matches!(
+            apply_json(
+                &db,
+                "r4",
+                "refund-4",
+                0,
+                json!({"kind":"refund","category_id":"food","card_account_id":"visa","amount":10,"date":"2026-10-16","original_operation_id":"expense"}),
+            )
+            .unwrap_err(),
+            Error::Invalid
+        ));
+        // Amounts beyond the safe integer range are rejected.
+        assert!(matches!(
+            apply_json(
+                &db,
+                "r5",
+                "refund-5",
+                0,
+                json!({"kind":"refund","category_id":"food","amount":9_007_199_254_740_992_i64,"date":"2026-10-16","original_operation_id":"expense"}),
+            )
+            .unwrap_err(),
+            Error::Invalid
+        ));
+        // A missing original is rejected.
+        assert!(matches!(
+            apply_json(
+                &db,
+                "r6",
+                "refund-6",
+                0,
+                json!({"kind":"refund","category_id":"food","amount":10,"date":"2026-10-16","original_operation_id":"missing"}),
+            )
+            .unwrap_err(),
+            Error::Invalid
+        ));
+        // A refund to another non-card account keeps the permissive current rule.
+        apply_json(
+            &db,
+            "r7",
+            "refund-7",
+            0,
+            json!({"kind":"refund","category_id":"food","amount":10,"date":"2026-10-19","original_operation_id":"expense","account_id":"wallet"}),
+        )
+        .unwrap();
+    }
 }
