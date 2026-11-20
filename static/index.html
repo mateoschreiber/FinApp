@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#173f3a">
+  <link rel="icon" href="/icon-192.png">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/style.css">
   <title>MisFinanzas</title>
@@ -45,8 +46,10 @@
         <button data-tab="exchange" type="button" aria-pressed="false">Importar y exportar</button>
       </nav>
       <section id="summary" data-view>
-        <h2>Saldos</h2>
+        <h2>Resumen</h2>
         <p id="balance-note"></p>
+        <div id="kpis" class="kpis"></div>
+        <h2>Saldos</h2>
         <div id="balances" class="cards"></div>
         <h2>Movimientos</h2>
         <form id="history-filter" class="grid">

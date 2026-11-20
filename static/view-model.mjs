@@ -40,6 +40,17 @@ export function calculateBalances(accounts, operations) {
   }));
 }
 
+export function monthlyTotals(operations, month) {
+  let income = 0n, expense = 0n;
+  for (const op of operations) {
+    if (op.deleted || !op.date?.startsWith(month)) continue;
+    if (op.kind === 'income') income += BigInt(op.amount);
+    else if (op.kind === 'expense') expense += BigInt(op.amount);
+    else if (op.kind === 'refund') expense -= BigInt(op.amount);
+  }
+  return {income, expense, net: income - expense};
+}
+
 export function overlayOperations(operations, pending) {
   const values = new Map(operations.map(op => [op.id, {...op}]));
   const remaining = [...pending];

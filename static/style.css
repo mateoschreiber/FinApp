@@ -1,13 +1,147 @@
-:root{font-family:system-ui,sans-serif;color:#182d2a;background:#f5f7f5;line-height:1.5}*{box-sizing:border-box}body{margin:0}header{background:#173f3a;color:white;padding:1rem max(1rem,calc((100vw - 1050px)/2));display:flex;align-items:center;justify-content:space-between;gap:1rem}header p{margin:0;font-size:.9rem}main{max-width:1050px;margin:auto;padding:1rem}section,form{min-width:0}h1{font-size:1.6rem;margin:.6rem 0}h2{font-size:1.2rem;margin:1.4rem 0 .6rem}h3{margin:.2rem 0 .8rem}label{display:block;font-weight:600;margin:.8rem 0}label span{font-weight:400}input,select,textarea,button{font:inherit}input,select,textarea{display:block;width:100%;padding:.7rem;border:1px solid #8b9e97;border-radius:.4rem;margin-top:.25rem;background:#fff;color:#182d2a}button{min-height:44px;padding:.6rem 1rem;border:1px solid #173f3a;border-radius:.4rem;background:#173f3a;color:#fff;cursor:pointer}button.secondary,.tabs button{background:#fff;color:#173f3a}button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:3px solid #da9c20;outline-offset:2px}.topline,.actions,.tabs{display:flex;gap:.6rem;align-items:center;flex-wrap:wrap}.topline{justify-content:space-between}.tabs{margin:1rem 0}.grid,.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:1rem}.grid form,.card,.row{background:white;border:1px solid #d6e1db;border-radius:.6rem;padding:1rem}.row{margin:.5rem 0}.row p,.card p{margin:.3rem 0}.row-actions{display:flex;gap:.5rem;flex-wrap:wrap}#notice{padding:1rem;background:#fff1ce;border:1px solid #a87212;border-radius:.4rem;margin:.5rem 0}#login-view{max-width:420px;margin:3rem auto}#movement-form{max-width:540px}.muted{color:#536b62}.conflict{border-color:#b46516} [hidden]{display:none!important}@media(max-width:600px){header span{display:none}main{padding:.9rem}.tabs button{flex:1}}
+/* Design tokens — every value in the interface traces back to this block. */
+:root {
+  /* Type: one 1.25 ratio, platform face; amounts use tabular figures. */
+  font-family: system-ui, sans-serif;
+  color: var(--ink);
+  background: var(--canvas);
+  line-height: 1.5;
+  color-scheme: light dark;
+  /* Ink ramp (3 levels) + brand + fixed semantic set. */
+  --canvas: #eef2ef;
+  --surface: #ffffff;
+  --ink: #182d2a;
+  --ink-2: #536b62;
+  --ink-3: #6d8379;
+  --line: #d6e1db;
+  --brand: #173f3a;
+  --brand-soft: #224f49;
+  --focus: #da9c20;
+  --positive: #1c6e32;
+  --negative: #a13530;
+  --warning-bg: #fff1ce;
+  --warning-line: #a87212;
+  /* Space: 0.25rem base grid. */
+  --space-1: 0.25rem; --space-2: 0.5rem; --space-3: 0.75rem;
+  --space-4: 1rem;  --space-6: 1.5rem; --space-8: 2rem;
+  /* Radius by role: controls, details, cards. */
+  --radius-control: 0.4rem; --radius-detail: 0.5rem; --radius-card: 0.6rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --canvas: #121a17;
+    --surface: #1a2420;
+    --ink: #e4ece8;
+    --ink-2: #a3b5ac;
+    --ink-3: #7f948a;
+    --line: #2c3a34;
+    --brand: #dcebe6;
+    --brand-soft: #c3d9d1;
+    --focus: #f0b439;
+    --positive: #63c47e;
+    --negative: #e8908b;
+    --warning-bg: #332a12;
+    --warning-line: #b8860b;
+  }
+}
+* { box-sizing: border-box }
+body { margin: 0 }
+[hidden] { display: none !important }
 
-.tabs button[aria-pressed="true"]{background:#173f3a;color:#fff}
-button:disabled{opacity:.55;cursor:default}
-details{margin:1rem 0;padding:.8rem;border:1px solid #d6e1db;border-radius:.5rem;background:#fff}
-summary{font-weight:600;cursor:pointer}
-.checkbox{display:flex;gap:.6rem;align-items:center;font-weight:400}
-.checkbox input{width:auto;margin:0}
-.table-scroll{max-width:100%;overflow:auto}
-table{width:100%;border-collapse:collapse;margin:.6rem 0}
-th,td{text-align:left;padding:.5rem;border-bottom:1px solid #d6e1db}
-article,td{overflow-wrap:anywhere}
-#entry-needed{margin:.6rem 0;padding:.8rem;background:#fff1ce;border-radius:.5rem}
+/* Shell: brand bar + centered content column. */
+header {
+  background: #173f3a;
+  color: #fff;
+  padding: var(--space-4) max(var(--space-4), calc((100vw - 1050px) / 2));
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+header p { margin: 0; font-size: 0.9rem }
+main { max-width: 1050px; margin: auto; padding: var(--space-4) }
+section, form { min-width: 0 }
+h1 { font-size: 1.6rem; margin: 0.6rem 0 }
+h2 { font-size: 1.25rem; margin: var(--space-6) 0 var(--space-3) }
+h3 { margin: 0.2rem 0 0.8rem }
+.topline, .actions, .tabs { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap }
+.topline { justify-content: space-between }
+.tabs { margin: var(--space-4) 0 }
+.grid, .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: var(--space-4) }
+.grid form, .card, .row {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-card);
+  padding: var(--space-4);
+}
+.row { margin: var(--space-2) 0 }
+.row p, .card p { margin: 0.3rem 0 }
+.row-actions { display: flex; gap: var(--space-2); flex-wrap: wrap }
+.muted { color: var(--ink-2) }
+
+/* Money: tabular figures and fixed signed colors, never color alone. */
+.amount { font-variant-numeric: tabular-nums }
+.positive { color: var(--positive) }
+.negative { color: var(--negative) }
+
+/* KPI cards: 4-up desktop, 2-up tablet, 1-up mobile; the number is the card. */
+.kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 190px), 1fr)); gap: var(--space-4) }
+.kpi { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-card); padding: var(--space-4) }
+.kpi .label { margin: 0; color: var(--ink-2); font-size: 0.9rem }
+.kpi .value { margin: 0.2rem 0 0; font-size: 1.55rem; font-weight: 650; font-variant-numeric: tabular-nums; overflow-wrap: anywhere }
+.kpi .detail { margin: 0.2rem 0 0; color: var(--ink-2); font-size: 0.85rem; font-variant-numeric: tabular-nums }
+
+/* Controls. */
+label { display: block; font-weight: 600; margin: var(--space-3) 0 }
+label span { font-weight: 400 }
+input, select, textarea, button { font: inherit }
+input, select, textarea {
+  display: block; width: 100%; padding: 0.7rem;
+  border: 1px solid #8b9e97; border-radius: var(--radius-control);
+  margin-top: 0.25rem; background: var(--surface); color: var(--ink);
+}
+button {
+  min-height: 44px; padding: 0.6rem 1rem;
+  border: 1px solid var(--brand); border-radius: var(--radius-control);
+  background: var(--brand); color: var(--canvas);
+  cursor: pointer;
+  transition: background-color 120ms ease-out;
+}
+button:hover:not(:disabled) { background: var(--brand-soft) }
+button:active:not(:disabled) { transform: translateY(1px) }
+button.secondary, .tabs button { background: var(--surface); color: var(--ink); border-color: var(--line) }
+button.secondary:hover:not(:disabled), .tabs button:hover:not(:disabled) { background: var(--canvas) }
+.tabs button[aria-pressed="true"] { background: var(--brand); color: var(--canvas); border-color: var(--brand) }
+button:disabled { opacity: 0.55; cursor: default }
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible, a:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important }
+}
+
+/* Notices and empty states. */
+#notice { padding: var(--space-4); background: var(--warning-bg); border: 1px solid var(--warning-line); border-radius: var(--radius-control); margin: var(--space-2) 0 }
+#entry-needed { margin: var(--space-2) 0; padding: var(--space-3); background: var(--warning-bg); border-radius: var(--radius-detail) }
+.empty { text-align: center; padding: var(--space-8) var(--space-4) }
+
+#login-view { max-width: 420px; margin: 3rem auto }
+#movement-form { max-width: 540px }
+.conflict { border-color: var(--warning-line) }
+
+details { margin: var(--space-4) 0; padding: 0.8rem; border: 1px solid var(--line); border-radius: var(--radius-detail); background: var(--surface) }
+summary { font-weight: 600; cursor: pointer }
+.checkbox { display: flex; gap: var(--space-3); align-items: center; font-weight: 400 }
+.checkbox input { width: auto; margin: 0 }
+
+/* Data tables: 14px at every density, rules only. */
+.table-scroll { max-width: 100%; overflow: auto }
+table { width: 100%; border-collapse: collapse; margin: var(--space-3) 0 }
+th, td { text-align: left; padding: var(--space-2) var(--space-2); border-bottom: 1px solid var(--line); font-size: 0.875rem }
+article, td { overflow-wrap: anywhere }
+
+@media (max-width: 600px) {
+  header span { display: none }
+  main { padding: 0.9rem }
+  .tabs button { flex: 1 }
+}

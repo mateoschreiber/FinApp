@@ -1,6 +1,21 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateBalances, overlayOperations, checkEditBase, setupStep } from '../static/view-model.mjs';
+import { calculateBalances, overlayOperations, checkEditBase, setupStep, monthlyTotals } from '../static/view-model.mjs';
+
+test('los totales del mes siguen la semántica del informe del servidor', () => {
+  const operations = [
+    {kind:'income',amount:3000000,date:'2026-11-05'},
+    {kind:'expense',amount:150000,date:'2026-11-08'},
+    {kind:'refund',amount:50000,date:'2026-11-09'},
+    {kind:'transfer',amount:300000,date:'2026-11-16'},
+    {kind:'payment',amount:200000,date:'2026-11-12'},
+    {kind:'expense',amount:90000,date:'2026-10-31'},
+    {kind:'income',amount:700000,date:'2026-11-30',deleted:true},
+  ];
+  assert.deepEqual(monthlyTotals(operations,'2026-11'),{income:3000000n,expense:100000n,net:2900000n});
+  assert.deepEqual(monthlyTotals(operations,'2026-10'),{income:0n,expense:90000n,net:-90000n});
+  assert.deepEqual(monthlyTotals([],'2026-11'),{income:0n,expense:0n,net:0n});
+});
 
 test('guía la configuración inicial sin volver a pedir datos existentes', () => {
   assert.equal(setupStep({accounts: [], categories: []}), 'account');

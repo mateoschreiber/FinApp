@@ -4,7 +4,7 @@ import {renderPlanning} from './planning.mjs';
 import {renderReconciliation} from './reconciliation.mjs';
 import {openUserStore} from './offline-store.mjs';
 import {syncUser} from './sync.mjs';
-import {calculateBalances, overlayOperations, checkEditBase, setupStep, historyPage} from './view-model.mjs';
+import {calculateBalances, overlayOperations, checkEditBase, setupStep, historyPage, monthlyTotals} from './view-model.mjs';
 
 const $ = id => document.getElementById(id);
 const fields = id => $(id).elements;
@@ -162,17 +162,47 @@ async function render() {
   if (first && ['credit','planning','exchange'].includes(activeTab)) tab(activeTab);
 }
 
+function renderKpis(totals) {
+  const kpis = $('kpis');
+  kpis.replaceChildren();
+  if (!view.accounts.length) return;
+  let net = 0, available = 0, debt = 0;
+  for (const a of view.accounts) {
+    const balance = totals.get(a.id) ?? 0;
+    net += balance;
+    if (a.kind === 'card') debt += balance; else available += balance;
+  }
+  const month = today().slice(0, 7);
+  const result = monthlyTotals(view.operations, month);
+  const monthLabel = new Intl.DateTimeFormat('es-PY', {month: 'long', year: 'numeric'}).format(new Date());
+  const kpi = (label, value, className, detail) => {
+    const card = element('div', null, 'kpi');
+    card.append(element('p', label, 'label'), element('p', money(value), 'value ' + className));
+    if (detail) card.append(element('p', detail, 'detail'));
+    kpis.append(card);
+  };
+  kpi('Patrimonio neto', net, net >= 0 ? 'positive' : 'negative');
+  kpi('Disponible', available, available >= 0 ? 'positive' : 'negative');
+  kpi('Deuda de tarjetas', debt, debt < 0 ? 'negative' : '');
+  kpi('Resultado de ' + monthLabel, Number(result.net), result.net >= 0 ? 'positive' : 'negative',
+    'Ingresos ' + money(Number(result.income)) + ' · Gastos ' + money(Number(result.expense)));
+}
+
 function renderBalances() {
   const balances = $('balances');
   balances.replaceChildren();
+  $('kpis').replaceChildren();
   $('balance-note').textContent = queue.some(item => item.status === 'pending' || item.status === 'conflict')
     ? 'Saldos provisionales con cambios locales.' : '';
   try {
     const totals = calculateBalances(view.accounts, view.operations);
+    renderKpis(totals);
     for (const a of view.accounts) {
       const card = element('article',null,'card');
-      const label = (a.kind === 'card' ? 'Deuda ' : 'Saldo ') + money(totals.get(a.id));
-      card.append(element('strong', a.name), element('p', label));
+      const balance = totals.get(a.id);
+      const label = (a.kind === 'card' ? 'Deuda ' : 'Saldo ') + money(balance);
+      const color = balance < 0 || a.kind === 'card' ? 'negative' : 'positive';
+      card.append(element('strong', a.name), element('p', label, 'amount ' + color));
       if (a.archived) card.append(element('p','Archivada','muted'));
       balances.append(card);
     }
@@ -299,11 +329,13 @@ function renderHistory() {
   const accounts = new Map(view.accounts.map(a => [a.id,a]));
   const categories = new Map(view.categories.map(c => [c.id,c.name]));
   const original = new Map(view.operations.map(op => [op.id,op]));
+  const signClass = op => op.kind === 'income' || op.kind === 'refund' ? 'positive'
+    : op.kind === 'transfer' ? '' : 'negative';
   for (const op of page.rows) {
     const row = element('article',null,'row');
     const account = accounts.get(op.account_id);
     const destination = accounts.get(op.destination_account_id || op.card_account_id);
-    row.append(element('strong',(movementNames[op.kind] || op.kind)+' · '+money(op.amount)));
+    row.append(element('strong',(movementNames[op.kind] || op.kind)+' · '+money(op.amount),'amount '+signClass(op)));
     const details = [op.date,[account?.name,destination?.name].filter(Boolean).join(' → '),categories.get(op.category_id),op.description];
     row.append(element('p',details.filter(Boolean).join(' · ')));
     if (op.original_operation_id) {
