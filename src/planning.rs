@@ -274,7 +274,9 @@ pub(crate) fn report(conn: &Connection, u: &str, month: &str) -> Result<Value, E
     let start = format!("{month}-01");
     let end = format!("{month}-{last_day:02}");
     let mut query=conn.prepare("SELECT data FROM finance_operations WHERE user_id=?1 AND date BETWEEN ?2 AND ?3 ORDER BY id")?;
+    // Prefixed so every review stored before v2 stops matching once and is reviewed again.
     let mut digest = Sha256::new();
+    digest.update(b"finapp-review-v2");
     let mut income = 0i128;
     let mut expense = 0i128;
     let mut loan_principal = 0i128;
@@ -372,6 +374,20 @@ pub(crate) fn report(conn: &Connection, u: &str, month: &str) -> Result<Value, E
         let parse=|s:&str|serde_json::from_str::<Operation>(s).map_err(|_|Error::Database);
         Ok(json!({"at":at,"previous":old.as_deref().map(parse).transpose()?,"current":parse(&new)?}))
     }).collect::<Result<Vec<_>,_>>()?;
+    // Balances and derived totals are part of the digest: an edit in an earlier month
+    // changes later months' net worth, and must return those months to pending review.
+    for (id, balance) in &balances {
+        digest.update((id.len() as u64).to_be_bytes());
+        digest.update(id.as_bytes());
+        let value = balance.to_string();
+        digest.update((value.len() as u64).to_be_bytes());
+        digest.update(value.as_bytes());
+    }
+    for total in [net_worth, loan_debt, cash_flow] {
+        let value = total.to_string();
+        digest.update((value.len() as u64).to_be_bytes());
+        digest.update(value.as_bytes());
+    }
     let digest = hex::encode(digest.finalize());
     let reviewed = conn
         .query_row(

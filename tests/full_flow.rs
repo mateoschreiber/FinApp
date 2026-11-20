@@ -376,3 +376,143 @@ fn opening_legacy_sqlite_preserves_versions_deletions_and_idempotency() {
         assert_eq!(foreign_keys, 0);
     }
 }
+
+#[tokio::test]
+async fn financial_changes_return_reviewed_later_months_to_pending() {
+    let db = Database::open_memory().unwrap();
+    db.bootstrap_admin("alice", PASSWORD).unwrap();
+    let router = app(db, ORIGIN.into());
+    let alice = login(&router, "alice").await;
+    let post = |path: &'static str, data: Value| async {
+        checked_json(
+            request(&router, Some(&alice), "POST", path, data).await,
+            StatusCode::OK,
+        )
+        .await
+    };
+    post(
+        "/api/accounts",
+        json!({"id":"bank","name":"Banco","kind":"bank","initial_balance":0}),
+    )
+    .await;
+    post(
+        "/api/categories",
+        json!({"id":"food","name":"Comidas","kind":"expense"}),
+    )
+    .await;
+    post("/api/operations", json!({
+        "request_id":"oct","id":"gasto-oct","expected_version":0,"deleted":false,
+        "kind":"expense","account_id":"bank","category_id":"food","date":"2026-10-10","amount":200
+    })).await;
+    let monthly = "/api/planning/month/2026-11";
+    let november = checked_json(
+        request(&router, Some(&alice), "GET", monthly, Value::Null).await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(november["net_worth"], "-200");
+    checked_json(
+        request(
+            &router,
+            Some(&alice),
+            "POST",
+            monthly,
+            json!({"digest":november["digest"]}),
+        )
+        .await,
+        StatusCode::NO_CONTENT,
+    )
+    .await;
+    let reviewed = checked_json(
+        request(&router, Some(&alice), "GET", monthly, Value::Null).await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(reviewed["reviewed"], true);
+
+    // An October edit changes November's balance without touching November's own rows.
+    post("/api/operations", json!({
+        "request_id":"oct-edit","id":"gasto-oct","expected_version":1,"deleted":false,
+        "kind":"expense","account_id":"bank","category_id":"food","date":"2026-10-10","amount":300
+    })).await;
+    let after_edit = checked_json(
+        request(&router, Some(&alice), "GET", monthly, Value::Null).await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(after_edit["net_worth"], "-300");
+    assert_eq!(after_edit["reviewed"], false);
+    checked_json(
+        request(
+            &router,
+            Some(&alice),
+            "POST",
+            monthly,
+            json!({"digest":after_edit["digest"]}),
+        )
+        .await,
+        StatusCode::NO_CONTENT,
+    )
+    .await;
+
+    // Editing an opening balance has no trigger; the digest must still notice.
+    post(
+        "/api/accounts",
+        json!({"id":"bank","name":"Banco","kind":"bank","initial_balance":1000}),
+    )
+    .await;
+    let after_balance = checked_json(
+        request(&router, Some(&alice), "GET", monthly, Value::Null).await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(after_balance["net_worth"], "700");
+    assert_eq!(after_balance["reviewed"], false);
+    checked_json(
+        request(
+            &router,
+            Some(&alice),
+            "POST",
+            monthly,
+            json!({"digest":after_balance["digest"]}),
+        )
+        .await,
+        StatusCode::NO_CONTENT,
+    )
+    .await;
+
+    // So does moving the account cutoff past the reviewed month.
+    post("/api/accounts", json!({"id":"bank","name":"Banco","kind":"bank","initial_balance":1000,
+        "details":{"entity":"account","archived":false,"institution":"","notes":"","cutoff_date":"2026-12-01"}})).await;
+    let after_cutoff = checked_json(
+        request(&router, Some(&alice), "GET", monthly, Value::Null).await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(after_cutoff["net_worth"], "0");
+    assert_eq!(after_cutoff["reviewed"], false);
+    checked_json(
+        request(
+            &router,
+            Some(&alice),
+            "POST",
+            monthly,
+            json!({"digest":after_cutoff["digest"]}),
+        )
+        .await,
+        StatusCode::NO_CONTENT,
+    )
+    .await;
+
+    // A change in a later month leaves the reviewed month alone.
+    post("/api/operations", json!({
+        "request_id":"dic","id":"gasto-dic","expected_version":0,"deleted":false,
+        "kind":"expense","account_id":"bank","category_id":"food","date":"2026-12-05","amount":50
+    })).await;
+    let after_december = checked_json(
+        request(&router, Some(&alice), "GET", monthly, Value::Null).await,
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(after_december["reviewed"], true);
+}
