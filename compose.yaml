@@ -1,6 +1,9 @@
 services:
   app:
-    build: .
+    build:
+      context: .
+      args:
+        FINAPP_VERSION: ${FINAPP_VERSION:-unversioned}
     image: finapp:local
     restart: unless-stopped
     environment:

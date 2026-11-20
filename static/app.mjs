@@ -739,11 +739,16 @@ if ('serviceWorker' in navigator) {
     const update = () => {$('reload-app').hidden = !registration.waiting || !navigator.serviceWorker.controller;};
     update();
     registration.addEventListener('updatefound', () => registration.installing?.addEventListener('statechange',update));
-    $('reload-app').addEventListener('click', () => {
+    $('reload-app').addEventListener('click', async () => {
       if (!registration.waiting) return;
+      // Pending edits live in IndexedDB and survive the reload; confirm so the user picks the moment.
+      const pending = store ? await store.pending().catch(() => []) : [];
+      if (pending.length && !confirm('Hay cambios sin sincronizar. Se conservarán después de actualizar. ¿Continuar?')) return;
       navigator.serviceWorker.addEventListener('controllerchange',() => location.reload(),{once:true});
       registration.waiting.postMessage('ACTIVATE_UPDATE');
     });
+    // A long-lived PWA window only revalidates the worker on navigation; check hourly.
+    setInterval(() => registration.update().catch(() => {}), 60 * 60 * 1000);
   }).catch(() => notice('No se pudo activar el modo sin conexión.'));
 }
 if (navigator.storage?.persist) {

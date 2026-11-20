@@ -47,6 +47,7 @@ En la primera ejecución crea el administrador. El nombre es un ejemplo y la con
 export FINAPP_ADMIN_USERNAME=admin
 read -rsp 'Contraseña del administrador: ' FINAPP_ADMIN_PASSWORD; echo
 export FINAPP_ADMIN_PASSWORD
+export FINAPP_VERSION=$(git -C . rev-parse --short HEAD 2>/dev/null || echo local)
 docker compose config --quiet
 docker compose up -d --build
 docker compose ps
@@ -127,12 +128,13 @@ Después de verificar un respaldo de la base actual y ensayar la imagen candidat
 
 ```bash
 git -C ~/FinApp pull --ff-only
+export FINAPP_VERSION=$(git -C ~/FinApp rev-parse --short HEAD)
 cd /srv/media/homelab
 docker compose -f compose.yaml -f finapp-cloudflare.override.yaml up -d --build --no-deps finapp
 curl --fail --silent http://127.0.0.1:3000/health
 ```
 
-El comando reconstruye desde `~/FinApp` y conserva el volumen `homelab_finapp_data`. Prueba el dominio con tu sesión de Cloudflare Access y comprueba los saldos y la sincronización. Si debes volver a una versión anterior a una migración, ensaya esa imagen con el respaldo anterior y monta el volumen restaurado tras verificarlo.
+El comando reconstruye desde `~/FinApp` y conserva el volumen `homelab_finapp_data`. `FINAPP_VERSION` estampa el commit dentro del service worker: sin ese paso, los navegadores con la aplicación instalada conservan la versión anterior de la interfaz aunque el servidor ya tenga la nueva. Los dispositivos detectan el cambio al abrir la aplicación y muestran «Aplicar actualización»; la cola de cambios pendientes en IndexedDB se conserva. Prueba el dominio con tu sesión de Cloudflare Access y comprueba los saldos y la sincronización. Si debes volver a una versión anterior a una migración, ensaya esa imagen con el respaldo anterior y monta el volumen restaurado tras verificarlo.
 
 ### Programar una copia diaria en Ubuntu
 
