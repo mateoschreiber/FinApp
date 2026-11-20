@@ -5,7 +5,7 @@
 - Todo el trabajo se hace en `main`.
 - No crees ramas nuevas ni trabajes en otras ramas (por ejemplo `estabilizacion-ux`, `feat/*` o `codex/*`).
 - No hagas `git push` sin autorización explícita del usuario.
-- Las credenciales siempre deben ser admin:admin
+- Credenciales del administrador inicial de FinApp: usuario `admin`, contraseña `adminhomeadmin`. Solo crean la cuenta en una base vacía; nunca sobrescriben contraseñas existentes.
 
 
 # AGENTS.md
@@ -17,9 +17,9 @@ Follow existing project conventions and preserve working behavior.
 ## Source of Truth
 - Current source code and tests take precedence over outdated documentation.
 - Read README.md for initial setup when needed.
-- Read docs/architecture.md when changing component boundaries.
-- Read docs/database.md when changing persistence or migrations.
-- Read docs/deployment.md when changing infrastructure.
+- Read src/lib.rs and src/main.rs when changing component boundaries.
+- Read src/db.rs and migrations/ when changing persistence. Applied migrations are immutable.
+- Read README.md when changing infrastructure or deployment.
 - Do not load unrelated documentation.
 
 ## Working Principles

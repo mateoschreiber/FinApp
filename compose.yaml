@@ -9,7 +9,7 @@ services:
     environment:
       FINAPP_BIND: 0.0.0.0:3000
       FINAPP_DB_PATH: /data/finapp.sqlite
-      FINAPP_ORIGIN: ${FINAPP_ORIGIN:?Define FINAPP_ORIGIN con la URL HTTPS exacta}
+      FINAPP_ORIGIN: ${FINAPP_ORIGIN:?Define FINAPP_ORIGIN con la URL exacta (https://... o http://localhost:3000 en local)}
       FINAPP_ADMIN_USERNAME: ${FINAPP_ADMIN_USERNAME:-}
       FINAPP_ADMIN_PASSWORD: ${FINAPP_ADMIN_PASSWORD:-}
     ports:

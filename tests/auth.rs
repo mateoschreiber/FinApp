@@ -357,6 +357,46 @@ async fn repeated_bootstrap_does_not_change_existing_password() {
 }
 
 #[tokio::test]
+async fn default_admin_is_created_in_an_empty_database() {
+    let db = Database::open_memory().unwrap();
+    assert!(!db.is_initialized().unwrap());
+    db.bootstrap_admin("admin", "adminhomeadmin").unwrap();
+    let app = app(db, "https://finanzas.example".to_owned());
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/api/login",
+            r#"{"username":"admin","password":"adminhomeadmin"}"#,
+            None
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+}
+
+#[tokio::test]
+async fn default_admin_does_not_add_a_user_to_an_initialized_database() {
+    let db = Database::open_memory().unwrap();
+    db.bootstrap_admin("alice", "password-1234").unwrap();
+    db.bootstrap_admin("admin", "adminhomeadmin").unwrap();
+    let app = app(db, "https://finanzas.example".to_owned());
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/api/login",
+            r#"{"username":"admin","password":"adminhomeadmin"}"#,
+            None
+        )
+        .await
+        .status(),
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
 async fn security_headers_cover_assets_api_and_rejected_requests_without_disabling_static_cache() {
     let app = app(
         Database::open_memory().unwrap(),

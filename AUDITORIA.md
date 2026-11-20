@@ -1,6 +1,6 @@
 # Auditoría general de FinApp
 
-**Las 6 entregas funcionales están completas y la estabilización previa al rediseño visual terminó.** La rama de trabajo `estabilizacion-ux` parte de `f411b88` (main al momento de empezar). El contenedor de producción no se tocó: pendiente validar en `server1` tras el push autorizado.
+**Las 6 entregas funcionales están completas y la estabilización previa al rediseño visual terminó.** El trabajo se hace en `main`; la rama `estabilizacion-ux` ya no se usa. El contenedor de producción no se ha tocado: pendiente validar en `server1`.
 
 ## Estado por entrega
 
@@ -23,11 +23,15 @@
 
 ## Qué falta, en orden de prioridad
 
-1. **Validar en `server1`:** push autorizado de la rama, primera corrida del CI de GitHub Actions, respaldo previo, `FINAPP_VERSION` en el despliegue y comprobación de la actualización PWA en un dispositivo real.
+1. **Validar en `server1`:** respaldo previo, `FINAPP_VERSION` en el despliegue y comprobación de la actualización PWA en un dispositivo real.
 2. **Importación real:** ensayar el XLSX real en instancia de prueba y cuadrar saldos y totales.
 3. **Android físico:** instalación PWA, uso sin conexión y rendimiento del historial (10.003 movimientos sintéticos: 1,96 MB iniciales, sincronización sin cambios de 141 bytes).
 4. **Copia automática:** confirmar una ejecución programada del respaldo y una copia recuperable fuera de `server1` (al auditar figuraban 0 ejecuciones registradas).
 5. **Observado una vez en desarrollo:** error de fila intermitente en la importación masiva (SELECT de `import_sources`, fila ~19.614), no reproducido en 6 corridas; si reaparece, instrumentar el error SQLite que hoy se traga en `src/exchange.rs`.
+
+## Registro de CI
+
+- Commit `4d31b59` en `main`: workflow `CI` (#1) completado con éxito en GitHub Actions, 1 min 39 s. Comprobado el 2026-11-20 en la página pública de Actions. Los jobs `rust`, `web` y `docker` no se revisaron por separado.
 
 ## Verificación
 
