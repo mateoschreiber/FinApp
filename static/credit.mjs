@@ -72,7 +72,14 @@ export function cardStatement(account, month, operations, portfolio) {
       else if (op.kind === 'income' || op.kind === 'refund') charges -= BigInt(op.amount);
     }
   }
-  return {closing, due, charges:safeNumber(charges), paid:safeNumber(paid), outstanding:safeNumber(charges-paid)};
+  // An imported card with a cutoff date carries its opening debt; charge it in the
+  // one cycle that contains the cutoff, where the server's balance math starts.
+  let opening = 0n;
+  if (account.cutoff_date && account.cutoff_date > previous && account.cutoff_date <= closing) {
+    charges -= BigInt(account.initial_balance);
+    if (BigInt(account.initial_balance) < 0n) opening = -BigInt(account.initial_balance);
+  }
+  return {closing, due, charges:safeNumber(charges), paid:safeNumber(paid), outstanding:safeNumber(charges-paid), opening:safeNumber(opening)};
 }
 
 const money = amount => new Intl.NumberFormat('es-PY').format(amount) + ' Gs.';
@@ -160,6 +167,30 @@ export async function renderCredit(container, ctx) {
     return form;
   }
   function end(form) {form.append(form.querySelector('button'));}
+  // One-click rectifications: same identity and status handling as form(), plus a
+  // confirmation because both actions are destructive.
+  function action(parent, label, question, build) {
+    const button=el('button',label);button.type='button';button.className='secondary';parent.append(button);
+    let last=null;
+    button.addEventListener('click',async()=>{
+      if (!current() || button.disabled) return;
+      if (!confirm(question)) return;
+      button.disabled=true;
+      try {
+        const identity=JSON.parse(localStorage.getItem('misfinanzas:last-user')||'null');
+        if (!identity || identity.id!==userId) throw new Error('La sesión cambió. Vuelve a abrir Créditos.');
+        const entry=build();
+        const key=JSON.stringify(entry);
+        if (last?.key!==key) last={key,request_id:crypto.randomUUID()};
+        await api('/api/credit','POST',{request_id:last.request_id,entry});
+        status.textContent='Anulado.';
+        await synchronize();
+        if (current()) await renderCredit(container,{...ctx,view:ctx.getView?.()??view});
+      } catch (error) {
+        if (current()) status.textContent=error.status===400 ? 'No se pudo anular: hay movimientos que dependen de él, por ejemplo una devolución.' : error.status===404 ? 'Ya fue anulado o no existe. Volvé a cargar la sección.' : error.message;
+      } finally { button.disabled=false; }
+    });
+  }
   const statement=section(container,'Resumen de tarjeta');
   statement.open=true;
   if (view.operations.some(o=>o.pending || o.conflict)) statement.append(el('p','Sincroniza los cambios pendientes para incluirlos en el resumen.'));
@@ -171,7 +202,7 @@ export async function renderCredit(container, ctx) {
       try {
         const card=cards.find(a=>a.id===cardInput.value);
         const value=cardStatement(card,month.value,activeOps,book);
-        output.textContent=value ? 'Cierre '+value.closing+' · Vencimiento '+value.due+' · Cargos del ciclo '+money(value.charges)+' · Pagos asociados '+money(value.paid)+' · Diferencia '+money(value.outstanding)
+        output.textContent=value ? 'Cierre '+value.closing+' · Vencimiento '+value.due+' · Cargos del ciclo '+money(value.charges)+(value.opening ? ' (incluye deuda inicial '+money(value.opening)+')' : '')+' · Pagos asociados '+money(value.paid)+' · Diferencia '+money(value.outstanding)
           : 'Configura el día de cierre y el día de vencimiento de la tarjeta en Cuentas.';
       } catch (error) {output.textContent=error.message;}
     }
@@ -208,7 +239,12 @@ export async function renderCredit(container, ctx) {
   } else purchases.append(el('p','Para registrar una compra financiada, crea una tarjeta y una categoría de gasto.'));
   for(const purchase of book.purchases) {
     const op=view.operations.find(o=>o.id===purchase.operation_id);
-    scheduleList(section(purchases,(op?.description??'Compra financiada')+' · '+money(purchase.installments.reduce((a,i)=>a+i.principal,0))),purchase.installments);
+    const panel=section(purchases,(op?.description??'Compra financiada')+' · '+money(purchase.installments.reduce((a,i)=>a+i.principal,0)));
+    scheduleList(panel,purchase.installments);
+    if (op && !op.deleted) {
+      action(panel,'Anular compra','Se quita el gasto en cuotas y su proyección del resumen de tarjeta. ¿Continuar?',()=>({kind:'cancel_purchase',operation_id:purchase.operation_id}));
+      panel.append(el('p','Para corregir los datos de la compra, anulá y volvé a registrarla.'));
+    }
   }
   const newLoan=section(container,'Registrar préstamo y desembolso');
   if (accounts.length) {
@@ -231,7 +267,11 @@ export async function renderCredit(container, ctx) {
     scheduleList(section(panel,'Proyección mensual original'),loan.installments,loan);
     if(loan.payments.length) {
       const history=section(panel,'Pagos registrados');
-      for(const p of loan.payments) history.append(el('p',p.date+' · Capital '+money(p.principal)+' · Interés '+money(p.interest)+' · Comisión '+money(p.fee)));
+      for(const p of loan.payments) {
+        const line=el('p',p.date+' · Capital '+money(p.principal)+' · Interés '+money(p.interest)+' · Comisión '+money(p.fee));
+        history.append(line);
+        action(line,'Anular pago','Quita este pago y restaura el capital pendiente del préstamo. ¿Continuar?',()=>({kind:'cancel_repayment',repayment_id:p.id}));
+      }
     }
     if(accounts.length) {
       const f=form(panel,'Registrar pago',v=>({kind:'repayment',loan_id:loan.id,account_id:v.account_id,date:v.date,principal:Number(v.principal),interest:Number(v.interest),fee:Number(v.fee),category_id:v.category_id||null}));

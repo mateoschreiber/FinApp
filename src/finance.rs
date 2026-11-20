@@ -94,7 +94,7 @@ pub fn initialize(db: &Database) -> Result<(), Error> {
     conn.execute_batch(include_str!("../migrations/002_finance.sql"))?;
     Ok(())
 }
-fn id_ok(s: &str) -> bool {
+pub(crate) fn id_ok(s: &str) -> bool {
     !s.is_empty() && s.len() <= 128 && !s.chars().any(char::is_control)
 }
 fn name_ok(s: &str) -> bool {

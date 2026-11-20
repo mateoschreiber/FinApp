@@ -49,6 +49,12 @@ enum Entry {
         month: String,
         amount: i64,
     },
+    CancelPurchase {
+        operation_id: String,
+    },
+    CancelRepayment {
+        repayment_id: String,
+    },
 }
 #[derive(Debug, Serialize, Deserialize)]
 struct Command {
@@ -247,6 +253,34 @@ fn post(tx: &Connection, user: &str, request: &str, p: Posting<'_>) -> Result<St
 fn valid_name(name: &str) -> bool {
     !name.trim().is_empty() && name.len() <= 160 && !name.chars().any(char::is_control)
 }
+/// Tombstones a generated operation through the same versioned path as every other
+/// edit, so refund invariants, balance checks and history all keep working.
+fn cancel(tx: &Connection, user: &str, id: &str, version: i64) -> Result<()> {
+    let change = finance::Change {
+        id: id.to_owned(),
+        request_id: format!("cancel:{id}:{version}"),
+        expected_version: version,
+        deleted: true,
+        kind: None,
+        account_id: None,
+        category_id: None,
+        card_account_id: None,
+        destination_account_id: None,
+        original_operation_id: None,
+        amount: None,
+        date: None,
+        description: None,
+        notes: None,
+    };
+    match finance::apply_in(tx, user, &change) {
+        Ok(finance::Outcome::Applied(_)) => Ok(()),
+        Ok(finance::Outcome::Conflict(_)) | Err(finance::Error::DuplicateRequest) => {
+            Err(StatusCode::CONFLICT)
+        }
+        Err(finance::Error::Invalid) => Err(StatusCode::BAD_REQUEST),
+        Err(finance::Error::Database) => Err(StatusCode::INTERNAL_SERVER_ERROR),
+    }
+}
 fn mutate(db: &Database, user: &str, command: &Command) -> Result<()> {
     let id = &command.request_id;
     require(uuid::Uuid::parse_str(id).is_ok() && id.len() == 36)?;
@@ -422,6 +456,54 @@ fn mutate(db: &Database, user: &str, command: &Command) -> Result<()> {
                 )
                 .map_err(database)?;
             }
+        }
+        Entry::CancelPurchase { operation_id } => {
+            require(finance::id_ok(operation_id))?;
+            let registered: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM credit_purchases WHERE user_id=?1 AND operation_id=?2)",
+                    params![user, operation_id],
+                    |r| r.get(0),
+                )
+                .map_err(database)?;
+            if !registered {
+                return Err(StatusCode::NOT_FOUND);
+            }
+            let op = operation(&tx, user, operation_id)?.ok_or(StatusCode::NOT_FOUND)?;
+            require(!op.deleted)?;
+            cancel(&tx, user, operation_id, op.version)?;
+            tx.execute(
+                "DELETE FROM credit_purchases WHERE user_id=?1 AND operation_id=?2",
+                params![user, operation_id],
+            )
+            .map_err(database)?;
+        }
+        Entry::CancelRepayment { repayment_id } => {
+            require(finance::id_ok(repayment_id))?;
+            let registered: Option<String> = tx
+                .query_row(
+                    "SELECT id FROM credit_repayments WHERE user_id=?1 AND id=?2",
+                    params![user, repayment_id],
+                    |r| r.get(0),
+                )
+                .optional()
+                .map_err(database)?;
+            if registered.is_none() {
+                return Err(StatusCode::NOT_FOUND);
+            }
+            for suffix in ["principal", "interest", "fee"] {
+                let id = format!("loan:{repayment_id}:{suffix}");
+                if let Some(op) = operation(&tx, user, &id)?
+                    && !op.deleted
+                {
+                    cancel(&tx, user, &id, op.version)?;
+                }
+            }
+            tx.execute(
+                "DELETE FROM credit_repayments WHERE user_id=?1 AND id=?2",
+                params![user, repayment_id],
+            )
+            .map_err(database)?;
         }
     }
     tx.execute(
@@ -723,5 +805,187 @@ mod tests {
         assert_eq!(view.loans[0].payments.len(), 1);
         assert!(portfolio(&db, "b").unwrap().loans.is_empty());
         assert!(mutate(&db, "b", &payment).is_err());
+    }
+
+    #[test]
+    fn cancelling_rectifies_purchases_and_repayments_atomically() {
+        let db = Database::open_memory().unwrap();
+        db.0.lock()
+            .unwrap()
+            .execute("INSERT INTO users VALUES('a','a','-',0)", [])
+            .unwrap();
+        for (id, kind) in [("bank", "bank"), ("visa", "card")] {
+            finance::save_account(
+                &db,
+                "a",
+                &finance::Account {
+                    id: id.into(),
+                    kind: kind.into(),
+                    name: id.into(),
+                    initial_balance: 0,
+                },
+            )
+            .unwrap();
+        }
+        finance::save_category(
+            &db,
+            "a",
+            &finance::Category {
+                id: "fee".into(),
+                kind: "expense".into(),
+                name: "Comisión".into(),
+            },
+        )
+        .unwrap();
+        let purchase = Command {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            entry: Entry::Purchase {
+                name: "Compra".into(),
+                account_id: "visa".into(),
+                category_id: "fee".into(),
+                amount: 300,
+                date: "2025-01-02".into(),
+                first_due: "2025-01-31".into(),
+                periods: 3,
+            },
+        };
+        mutate(&db, "a", &purchase).unwrap();
+        let loan = Command {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            entry: Entry::Loan {
+                name: "Préstamo".into(),
+                account_id: "bank".into(),
+                principal: 1000,
+                date: "2025-01-02".into(),
+                first_due: "2025-02-02".into(),
+                periods: 2,
+                method: "german".into(),
+                rate_bps: 0,
+                rate_type: "nominal".into(),
+            },
+        };
+        mutate(&db, "a", &loan).unwrap();
+        let payment = Command {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            entry: Entry::Repayment {
+                loan_id: loan.request_id.clone(),
+                account_id: "bank".into(),
+                date: "2025-02-01".into(),
+                principal: 200,
+                interest: 20,
+                fee: 1,
+                category_id: Some("fee".into()),
+            },
+        };
+        mutate(&db, "a", &payment).unwrap();
+        assert_eq!(portfolio(&db, "a").unwrap().loans[0].outstanding, 800);
+
+        // Unknown targets fail without touching anything.
+        let unknown = Command {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            entry: Entry::CancelPurchase {
+                operation_id: "nope".into(),
+            },
+        };
+        assert_eq!(
+            mutate(&db, "a", &unknown).unwrap_err(),
+            StatusCode::NOT_FOUND
+        );
+
+        // Cancel the purchase; retries are idempotent, the ledger keeps a tombstone.
+        let purchase_op = format!("loan:{}:purchase", purchase.request_id);
+        let cancel_purchase = Command {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            entry: Entry::CancelPurchase {
+                operation_id: purchase_op.clone(),
+            },
+        };
+        mutate(&db, "a", &cancel_purchase).unwrap();
+        mutate(&db, "a", &cancel_purchase).unwrap();
+        assert!(portfolio(&db, "a").unwrap().purchases.is_empty());
+        let snapshot = finance::snapshot(&db, "a").unwrap();
+        assert!(
+            snapshot
+                .operations
+                .iter()
+                .any(|o| o.id == purchase_op && o.deleted)
+        );
+
+        // Cancel the repayment; outstanding capital and payments are restored.
+        let cancel_payment = Command {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            entry: Entry::CancelRepayment {
+                repayment_id: payment.request_id.clone(),
+            },
+        };
+        mutate(&db, "a", &cancel_payment).unwrap();
+        mutate(&db, "a", &cancel_payment).unwrap();
+        let view = portfolio(&db, "a").unwrap();
+        assert_eq!(view.loans[0].outstanding, 1000);
+        assert!(view.loans[0].payments.is_empty());
+        let interest_id = format!("loan:{}:interest", payment.request_id);
+        assert!(
+            finance::snapshot(&db, "a")
+                .unwrap()
+                .operations
+                .iter()
+                .any(|o| o.id == interest_id && o.deleted)
+        );
+
+        // Another user cannot cancel what they never owned.
+        let foreign = Command {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            entry: Entry::CancelRepayment {
+                repayment_id: payment.request_id.clone(),
+            },
+        };
+        assert_eq!(
+            mutate(&db, "b", &foreign).unwrap_err(),
+            StatusCode::NOT_FOUND
+        );
+
+        // A refund on the purchase expense blocks its cancellation.
+        let purchase2 = Command {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            entry: Entry::Purchase {
+                name: "Otra compra".into(),
+                account_id: "visa".into(),
+                category_id: "fee".into(),
+                amount: 100,
+                date: "2025-03-02".into(),
+                first_due: "2025-03-31".into(),
+                periods: 2,
+            },
+        };
+        mutate(&db, "a", &purchase2).unwrap();
+        let purchase2_op = format!("loan:{}:purchase", purchase2.request_id);
+        let refund = finance::Change {
+            id: "refund-1".into(),
+            request_id: "refund-1".into(),
+            expected_version: 0,
+            deleted: false,
+            kind: Some("refund".into()),
+            account_id: Some("visa".into()),
+            category_id: Some("fee".into()),
+            card_account_id: None,
+            destination_account_id: None,
+            original_operation_id: Some(purchase2_op.clone()),
+            amount: Some(50),
+            date: Some("2025-03-05".into()),
+            description: None,
+            notes: None,
+        };
+        finance::apply(&db, "a", &refund).unwrap();
+        let blocked = Command {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            entry: Entry::CancelPurchase {
+                operation_id: purchase2_op.clone(),
+            },
+        };
+        assert_eq!(
+            mutate(&db, "a", &blocked).unwrap_err(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(portfolio(&db, "a").unwrap().purchases.len(), 1);
     }
 }
