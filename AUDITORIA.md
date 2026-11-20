@@ -1,26 +1,34 @@
 # Auditoría general de FinApp
 
-**FinApp llegó a la entrega 6 de 6 y está en validación funcional en producción.** Al momento de la auditoría, la rama `main` de GitHub y la versión desplegada en `server1` coincidían en el commit `f411b88`. El contenedor estaba saludable y SQLite pasó las comprobaciones de integridad. Quedan correcciones y pruebas de aceptación antes de cerrar la funcionalidad y pasar al diseño visual.
+**Las 6 entregas funcionales están completas y la estabilización previa al rediseño visual terminó.** La rama de trabajo `estabilizacion-ux` parte de `f411b88` (main al momento de empezar). El contenedor de producción no se tocó: pendiente validar en `server1` tras el push autorizado.
 
 ## Estado por entrega
 
-| Entrega | Resultado de la auditoría |
+| Entrega | Resultado |
 | --- | --- |
-| 1. Primer uso y catálogos | Se probó en navegador la creación de la primera cuenta, las categorías sugeridas y el primer gasto. |
-| 2. Modelo financiero y operaciones | Se verificó la migración de la base anterior y se comprobó con datos de prueba que una transferencia y un reintegro afectan las cuentas y el informe correctamente. |
-| 3. PWA y sincronización | Se probó la recarga sin conexión, la conservación de la cola tras vencer la sesión y la sincronización con un segundo perfil. Se detectó un problema en las actualizaciones de la PWA. |
-| 4. Tarjetas y préstamos | Las pruebas cubren cuotas, amortización francesa y alemana, pagos parciales y asignación de pagos de tarjeta. La gestión de correcciones y deuda previa sigue incompleta. |
-| 5. Planificación e informes | Están disponibles presupuestos, recurrentes, objetivos, comprobantes y revisión mensual. Se detectó una inconsistencia al recalcular un mes revisado. |
-| 6. Importación, conciliación y recuperación | XLSX, conciliación y exportación tienen pruebas con datos sintéticos. Se verificó el checksum del respaldo en el servidor y que el cron estaba activo. Al auditar figuraban **0 ejecuciones automáticas registradas**. |
+| 1. Primer uso y catálogos | Completa y cubierta por pruebas; estado vacío verificado en navegador. |
+| 2. Modelo financiero y operaciones | Completa; devoluciones cubiertas con 13 aserciones nuevas; `TOTAL`→`SUM` (enteros exactos). |
+| 3. PWA y sincronización | Completa; actualización versionada por build (commit estampado en `sw.js`) verificada dos veces en Chrome real (v3 y v4): botón «Aplicar actualización», recarga controlada, cola IndexedDB conservada, caché vieja eliminada. |
+| 4. Tarjetas y préstamos | Completa; rectificaciones `cancel_purchase` y `cancel_repayment` atómicas e idempotentes; deuda inicial de tarjeta con vencimiento en el ciclo de corte; corrección = anular y volver a registrar. |
+| 5. Planificación e informes | Completa; digest de revisión mensual v2 incluye saldos, patrimonio, flujo y deuda → editar un mes anterior devuelve los meses posteriores a pendiente (invalidación única aceptada). |
+| 6. Importación, conciliación y recuperación | Completa; años de dos dígitos rechazados con mensaje claro; importación de 25.000 filas medida: 11,4 s, `/health` nunca bloqueado (peor caso 476 µs), lector concurrente espera ~6 s por la conexión compartida — bloqueo acotado documentado, sin refactor. |
+
+## Correcciones y hallazgos de la renovación UX/UI
+
+- Design system sobre tokens con la identidad verde/oro existente; sin frameworks ni fuentes nuevas.
+- Resumen con 4 KPIs: patrimonio neto, disponible, deuda de tarjetas, resultado del mes; misma semántica que el informe del servidor, con prueba.
+- Modo oscuro con tokens (`prefers-color-scheme`), contraste verificado 6,7–13,3 en ambos modos; `theme-color` dual para Android.
+- Color semántico fijo para importes firmados; `tabular-nums`; acción rápida «Registrar movimiento».
+- Favicon 404 corregido; guard de `prefers-reduced-motion`; foco verificado parada por parada.
 
 ## Qué falta, en orden de prioridad
 
-1. **Corregir la revisión mensual.** Al editar un gasto de octubre, el patrimonio de noviembre bajó de **900 a 800 Gs.**, pero noviembre siguió marcado como revisado. Cualquier cambio que altere los saldos de un mes revisado debe devolverlo a pendiente. [Cálculo y revisión del informe](src/planning.rs#L341)
-2. **Versionar la PWA en cada despliegue.** Se reprodujo en Edge que, si cambia `app.mjs` pero `sw.js` sigue igual, el navegador continúa mostrando el código anterior incluso al recargar. La actualización debe instalar los archivos nuevos y conservar la cola local. [Service worker](static/sw.js#L24)
-3. **Completar la corrección de operaciones de crédito.** Faltan acciones para rectificar una compra financiada o un pago de préstamo registrado por error. También falta asignar un vencimiento a la deuda inicial de una tarjeta para que aparezca en la proyección. [Operaciones de crédito](src/credit.rs#L17) · [Proyección de tarjeta](static/credit.mjs#L53)
-4. **Validar con datos y dispositivos reales.** Falta probar la instalación en un Android físico, importar el XLSX real en una instancia de ensayo y cuadrar saldos y totales con el archivo. También queda confirmar una ejecución programada del respaldo y una copia recuperable fuera de `server1`.
-5. **Comprobar el rendimiento en móvil y automatizar las pruebas.** Con **10.003 movimientos** sintéticos, la carga inicial fue de **1,96 MB** y una sincronización sin cambios devolvió **141 bytes**. El servidor pagina el historial y la pantalla lo filtra en el dispositivo. Falta medir ese flujo en Android y ejecutar las suites automáticamente al actualizar `main`. [Historial en la interfaz](static/app.mjs#L284)
+1. **Validar en `server1`:** push autorizado de la rama, primera corrida del CI de GitHub Actions, respaldo previo, `FINAPP_VERSION` en el despliegue y comprobación de la actualización PWA en un dispositivo real.
+2. **Importación real:** ensayar el XLSX real en instancia de prueba y cuadrar saldos y totales.
+3. **Android físico:** instalación PWA, uso sin conexión y rendimiento del historial (10.003 movimientos sintéticos: 1,96 MB iniciales, sincronización sin cambios de 141 bytes).
+4. **Copia automática:** confirmar una ejecución programada del respaldo y una copia recuperable fuera de `server1` (al auditar figuraban 0 ejecuciones registradas).
+5. **Observado una vez en desarrollo:** error de fila intermitente en la importación masiva (SELECT de `import_sources`, fila ~19.614), no reproducido en 6 corridas; si reaparece, instrumentar el error SQLite que hoy se traga en `src/exchange.rs`.
 
 ## Verificación
 
-Pasaron las **62 pruebas automatizadas** de Rust y JavaScript. Los problemas de revisión mensual y actualización de la PWA se reprodujeron en comprobaciones adicionales. Esas dos correcciones tienen prioridad sobre el rediseño visual.
+70 pruebas automatizadas pasando (34 Rust + 36 JavaScript), `cargo fmt --check` y `clippy -D warnings` limpios. Flujo de actualización PWA verificado en navegador real dos veces consecutivas. Pruebas visuales y de accesibilidad ejecutadas en Chrome (landmarks, foco, contraste, targets táctiles, estados vacío/sin conexión/oscuro); capturas en el equipo de trabajo.

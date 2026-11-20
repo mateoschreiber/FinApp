@@ -329,7 +329,7 @@ function renderHistory() {
   const accounts = new Map(view.accounts.map(a => [a.id,a]));
   const categories = new Map(view.categories.map(c => [c.id,c.name]));
   const original = new Map(view.operations.map(op => [op.id,op]));
-  const signClass = op => op.kind === 'income' || op.kind === 'refund' ? 'positive'
+  const signClass = op => op.kind === 'income' || op.kind === 'refund' || op.kind === 'loan_draw' ? 'positive'
     : op.kind === 'transfer' ? '' : 'negative';
   for (const op of page.rows) {
     const row = element('article',null,'row');
