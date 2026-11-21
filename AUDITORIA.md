@@ -416,3 +416,64 @@ Preview no persiste; confirmaciones rechazadas dejan 0 operaciones; los errores 
 - La causa intermitente de `SQLITE_BUSY` de F8.4 sigue abierta; F9.3C la medirá.
 - Un cliente antiguo que intente confirmar diferencias recibirá 409 hasta actualizarse: es el comportamiento aprobado.
 - F9.3B (mapeos de categorías y referencias) y F9.3D (conciliación CSV) quedan pendientes.
+
+## F9.3B — Referencias externas, mapeos e idempotencia XLSX
+
+### Reglas implementadas
+
+- Tres espacios de identificadores separados: cuentas (`mapping`), categorías (`category_mapping`) y operaciones (`operation_mapping`), todos con `serde(default)`.
+- `import_sources(user_id, entity, source_id)` sigue siendo el registro de vínculos; no se crearon tablas ni migraciones.
+- Un `category_mapping` valida que la categoría interna exista, pertenezca al usuario y tenga el tipo esperado; un vínculo persistido no puede redirigirse silenciosamente.
+- Un `operation_mapping` valida que la operación interna exista y pertenece al usuario; el vínculo usado se persiste en `import_sources` para que archivos posteriores lo resuelvan sin repetir el mapeo.
+- `movimiento_relacionado_id` se resuelve en este orden: `import_sources` → `operation_mapping` → operación interna directa del usuario; si no existe, la fila se rechaza y el preview expone `references` estructuradas.
+- `preview_token` ahora incluye `category_mapping` y `operation_mapping`, además de archivo, usuario, mapeo de cuentas, flag de corte y reporte. `ack_saldo` de F9.3A se conserva.
+- La UI ofrece selectores para vincular categorías externas y referencias sin resolver (máximo 50 gastos candidatos); cambiar cualquier vínculo invalida la vista previa y la aceptación de saldos.
+
+### Casos B01–B20 (esperado = observado)
+
+| Caso | Resultado |
+|---|---|
+| B01 cuenta externa vinculada | 1 cuenta interna, movimiento en `banco`, vínculo en `import_sources` |
+| B02 categoría externa vinculada | 1 categoría interna, movimiento con `category_id=food`, vínculo persistido |
+| B03 categoría externa nueva | categoría `cat-food` creada y usada |
+| B04 gasto + reintegro en un archivo | 2 operaciones, patrimonio −300, relación `r1→e1` |
+| B04b reintegro antes del gasto | el importador ordena reintegros al final; sin error |
+| B05 reintegro a operación importada antes | resuelve vía `import_sources` |
+| B06 `operation_mapping` explícito | `r1→expense-existing` |
+| B06b vínculo persistido sin mapeo repetido | nuevo reintegro `r2` resuelve `e1→expense-existing` |
+| B07 referencia inexistente | error + `references` estructurada; 0 escrituras |
+| B08 referencia de otro usuario | error; 0 escrituras para el usuario importador |
+| B09 mismo `source_id` en 3 entidades | 3 filas `import_sources`, sin colisión |
+| B10 reimportación idéntica | `duplicates=3`, `added=0`, sin duplicar movimientos |
+| B11 fila modificada | error de huella distinta; historial intacto |
+| B12 redirección de vínculo persistido | rechazada; vínculo original conservado |
+| B13 duplicados internos | error; confirmación bloqueada; 0 escrituras |
+| B14 categoría archivada vinculada | permitido por las reglas actuales de importación (documentado) |
+| B15 movimiento anterior al corte | registrado pero fuera del saldo |
+| B16 categoría después de cuenta vinculada | ambos mapeos resuelven en el mismo archivo |
+| B17 dos reintegros del mismo gasto | 500−200−200, patrimonio −100 |
+| B18 reintegros que exceden el gasto | error; confirmación bloqueada; 0 escrituras |
+| B19 mapeo distinto al preview | 409; 0 escrituras |
+| B19b `operation_mapping` no usado pero distinto | el token cambia; 409 |
+| B20 25.000 movimientos con mapeos | `added=25002`, 0 errores, 25.000 operaciones con `category_id=food` |
+
+`added` sigue contando filas procesadas de cualquier entidad: 25.000 movimientos + 1 cuenta + 1 categoría = 25.002. No se añadió un desglose nuevo para no romper compatibilidad; los conteos por entidad se verifican por SQL en las pruebas.
+
+### Mutaciones (todas detectadas y restauradas)
+
+| Mutación | Prueba que falló |
+|---|---|
+| Aplicar el mapping de cuentas a categorías | B02 |
+| Ignorar `import_sources` al resolver referencias | B06b |
+| Permitir redirigir un vínculo persistido | B12 |
+| Omitir los nuevos mappings del `preview_token` | B19b |
+
+### Validación
+
+`cargo test --locked --test import_integrity` (38/38), `node --test tests/import_ui.test.mjs` (7/7), `cargo fmt --check`, `clippy -D warnings`, `cargo test --locked` (**132 Rust**: 41 lib, 14 auth, 16 credit_flows, 2 credit_migration, 8 finance_api, 6 finance_invariants, 3 full_flow, 38 import_integrity, 4 import_load), `npm test` (**62 JS**), build y suite Docker: todo en verde. Cero pruebas ignoradas; `integrity_check=ok` y `foreign_key_check=0` en cada escenario.
+
+### Riesgos residuales
+
+- La causa intermitente de `SQLITE_BUSY` de F8.4 sigue abierta; F9.3C la medirá con respaldo concurrente.
+- Vincular una categoría archivada sigue permitido porque las reglas de importación actuales no aplican el filtro de archivadas; se documenta como decisión pendiente, no como defecto.
+- La UI de referencias muestra hasta 50 gastos candidatos; un gasto más antiguo requiere usar la API con `operation_mapping` explícito.

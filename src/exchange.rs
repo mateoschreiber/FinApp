@@ -39,6 +39,12 @@ struct Upload {
     file: String,
     #[serde(default)]
     mapping: BTreeMap<String, String>,
+    /// External category id -> internal category id. Never applied to accounts or operations.
+    #[serde(default)]
+    category_mapping: BTreeMap<String, String>,
+    /// External operation id -> internal operation id, for related-movement references.
+    #[serde(default)]
+    operation_mapping: BTreeMap<String, String>,
     #[serde(default)]
     include_before_cutoff: bool,
     preview_token: Option<String>,
@@ -50,6 +56,8 @@ struct Upload {
 #[derive(Default, Serialize)]
 struct Preview {
     accounts: Vec<SourceAccount>,
+    categories: Vec<SourceCategory>,
+    references: Vec<SourceReference>,
     added: usize,
     duplicates: usize,
     skipped: usize,
@@ -75,6 +83,18 @@ struct SourceAccount {
     name: String,
     kind: String,
     linked: Option<String>,
+}
+#[derive(Serialize)]
+struct SourceCategory {
+    id: String,
+    name: String,
+    kind: String,
+    linked: Option<String>,
+}
+#[derive(Serialize)]
+struct SourceReference {
+    source_id: String,
+    movement_id: String,
 }
 
 fn key(s: &str) -> String {
@@ -273,6 +293,94 @@ impl Import<'_> {
     fn place(&self) -> String {
         format!("{} fila {}", self.sheet, self.line)
     }
+
+    /// Resolves an external category id to the internal id the row must use.
+    /// `expected_kind` is the category kind required by the importing row.
+    fn category_target(
+        &self,
+        conn: &Connection,
+        external: &str,
+        expected_kind: &str,
+    ) -> Result<String, String> {
+        if let Some(mapped) = self.input.category_mapping.get(external) {
+            let (kind, exists): (String, bool) = conn
+                .query_row(
+                    "SELECT kind,1 FROM finance_categories WHERE user_id=?1 AND id=?2",
+                    params![self.user, mapped],
+                    |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? == 1)),
+                )
+                .optional()
+                .map_err(|_| "No se pudo consultar la categoría vinculada.")?
+                .unwrap_or_else(|| (String::new(), false));
+            if !exists {
+                return Err("La categoría vinculada no existe.".into());
+            }
+            if kind != expected_kind {
+                return Err("La categoría vinculada tiene un tipo diferente.".into());
+            }
+            return Ok(mapped.clone());
+        }
+        Ok(external.to_owned())
+    }
+
+    /// Resolves an external related-operation id to the internal operation id.
+    /// Persisted import_sources win over a new explicit mapping.
+    fn operation_target(&self, conn: &Connection, external: &str) -> Result<String, String> {
+        let prior: Option<String> = conn
+            .query_row(
+                "SELECT target_id FROM import_sources WHERE user_id=?1 AND entity='operation' AND source_id=?2",
+                params![self.user, external],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(|_| "No se pudo consultar la referencia del movimiento.")?;
+        if let Some(target) = prior {
+            if self
+                .input
+                .operation_mapping
+                .get(external)
+                .is_some_and(|value| value != &target)
+            {
+                return Err("El movimiento ya está vinculado a otra operación de FinApp.".into());
+            }
+            return Ok(target);
+        }
+        if let Some(mapped) = self.input.operation_mapping.get(external) {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM finance_operations WHERE user_id=?1 AND id=?2)",
+                    params![self.user, mapped],
+                    |r| r.get(0),
+                )
+                .map_err(|_| "No se pudo comprobar la operación vinculada.")?;
+            if !exists {
+                return Err("La operación vinculada no existe.".into());
+            }
+            // Persist the logical link so later files can resolve the same external
+            // reference without repeating the explicit mapping.
+            let fingerprint = hex::encode(Sha256::digest(
+                serde_json::to_vec(&("operation_mapping", external, mapped))
+                    .expect("serializable mapping"),
+            ));
+            conn.execute(
+                "INSERT INTO import_sources VALUES(?,?,?,?,?)",
+                params![self.user, "operation", external, mapped, fingerprint],
+            )
+            .map_err(|_| "No se pudo guardar la referencia del movimiento.")?;
+            return Ok(mapped.clone());
+        }
+        let direct: bool = conn
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM finance_operations WHERE user_id=?1 AND id=?2)",
+                params![self.user, external],
+                |r| r.get(0),
+            )
+            .map_err(|_| "No se pudo comprobar la referencia del movimiento.")?;
+        if direct {
+            return Ok(external.to_owned());
+        }
+        Err("No se pudo resolver la referencia del movimiento.".into())
+    }
 }
 
 impl Import<'_> {
@@ -362,7 +470,27 @@ impl Import<'_> {
             origin
         };
         let mut category = optional(value(row, "categoria_id"));
-        let original = optional(value(row, "movimiento_relacionado_id"));
+        if let Some(external) = category.as_deref()
+            && matches!(ty, "income" | "expense" | "refund")
+        {
+            let expected = if ty == "income" { "income" } else { "expense" };
+            category = Some(self.category_target(conn, external, expected)?);
+        }
+        let original_external = optional(value(row, "movimiento_relacionado_id"));
+        let original = match original_external.as_deref() {
+            Some(external) if ty == "refund" => match self.operation_target(conn, external) {
+                Ok(target) => Some(target),
+                Err(error) => {
+                    self.report.references.push(SourceReference {
+                        source_id: external.to_owned(),
+                        movement_id: id.to_owned(),
+                    });
+                    return Err(error);
+                }
+            },
+            Some(external) => Some(external.to_owned()),
+            None => None,
+        };
         if ty == "refund" && category.is_none() {
             category = conn
                 .query_row(
@@ -505,17 +633,30 @@ impl Import<'_> {
                 if self.mapping.get(id).is_some_and(|value| value != &target) {
                     return Err("Esta cuenta ya está vinculada a otra cuenta de FinApp.".into());
                 }
-                self.mapping.insert(id.into(), target);
+                self.mapping.insert(id.into(), target.clone());
+            }
+            if entity == "category"
+                && self
+                    .input
+                    .category_mapping
+                    .get(id)
+                    .is_some_and(|value| value != &target)
+            {
+                return Err("Esta categoría ya está vinculada a otra categoría de FinApp.".into());
             }
             self.report.duplicates += 1;
             return Ok(());
         }
-        let target = if entity == "account" {
-            self.mapping.get(id).cloned().unwrap_or_else(|| id.into())
-        } else {
-            id.into()
+        let target = match entity {
+            "account" => self.mapping.get(id).cloned().unwrap_or_else(|| id.into()),
+            "category" => self.category_target(conn, id, ty)?,
+            _ => id.into(),
         };
-        let mapped = entity == "account" && self.mapping.contains_key(id);
+        let mapped = match entity {
+            "account" => self.mapping.contains_key(id),
+            "category" => self.input.category_mapping.contains_key(id),
+            _ => false,
+        };
         let exists: bool = conn
             .query_row(
                 &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE user_id=? AND id=?)"),
@@ -541,23 +682,25 @@ impl Import<'_> {
         match entity {
             "account" => self.add_account(conn, row, id, &target, ty)?,
             "category" => {
-                finance::save_category_in(
-                    conn,
-                    self.user,
-                    &Category {
-                        id: id.into(),
-                        name: value(row, "nombre").into(),
-                        kind: ty.into(),
-                    },
-                )
-                .map_err(finance_error)?;
+                if !mapped {
+                    finance::save_category_in(
+                        conn,
+                        self.user,
+                        &Category {
+                            id: target.clone(),
+                            name: value(row, "nombre").into(),
+                            kind: ty.into(),
+                        },
+                    )
+                    .map_err(finance_error)?;
+                }
                 if archived(row) {
                     catalog::save(
                         conn,
                         self.user,
                         &catalog::Detail {
                             entity: "category".into(),
-                            id: id.into(),
+                            id: target.clone(),
                             archived: true,
                             ..Default::default()
                         },
@@ -654,6 +797,14 @@ fn run(
                     linked: import.mapping.get(id).cloned(),
                 });
             }
+            if entity == "category" {
+                import.report.categories.push(SourceCategory {
+                    id: id.into(),
+                    name: value(row, "nombre").into(),
+                    kind: ty.into(),
+                    linked: import.input.category_mapping.get(id).cloned(),
+                });
+            }
         }
     }
     import.sheet = "balances";
@@ -732,6 +883,8 @@ async fn import(
             serde_json::to_vec(&(
                 &user.id,
                 &input.mapping,
+                &input.category_mapping,
+                &input.operation_mapping,
                 input.include_before_cutoff,
                 &report,
             ))

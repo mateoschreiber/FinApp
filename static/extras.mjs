@@ -53,6 +53,8 @@ export function renderData(container, {api, getView, today, synchronize, isCurre
   importSection.append(element('h3', 'Importar cuentas, categorías y movimientos'), form, status, result);
   content.append(importSection);
   let mapping = Object.create(null);
+  let categoryMapping = Object.create(null);
+  let operationMapping = Object.create(null);
   let review = null;
   let busy = false;
 
@@ -104,6 +106,67 @@ export function renderData(container, {api, getView, today, synchronize, isCurre
         accounts.append(caption);
       }
       result.append(accounts);
+    }
+    const existingCategories = getView()?.categories || [];
+    if (report.categories?.length) {
+      const categories = element('details');
+      categories.open = report.errors.length > 0;
+      categories.append(element('summary', 'Vincular categorías de origen'));
+      for (const row of report.categories) {
+        const caption = element('label', row.name + ' · ' + (row.kind === 'income' ? 'Ingreso' : 'Gasto') + ' · ' + row.id);
+        const select = element('select');
+        const fresh = element('option', 'Crear como categoría nueva');
+        fresh.value = '';
+        select.append(fresh);
+        for (const item of existingCategories.filter(category => category.kind === row.kind)) {
+          const option = element('option', item.name);
+          option.value = item.id;
+          select.append(option);
+        }
+        select.value = categoryMapping[row.id] || row.linked || '';
+        select.disabled = busy;
+        select.addEventListener('change', () => {
+          if (select.value) categoryMapping[row.id] = select.value;
+          else delete categoryMapping[row.id];
+          invalidate();
+          status.textContent = 'Vuelve a generar la vista previa para revisar los vínculos.';
+        });
+        caption.append(select);
+        categories.append(caption);
+      }
+      result.append(categories);
+    }
+    if (report.references?.length) {
+      const references = element('details');
+      references.open = true;
+      references.append(element('summary', 'Referencias de movimientos sin resolver (' + report.references.length + ')'));
+      const candidates = (getView()?.operations || [])
+        .filter(op => op.kind === 'expense' && !op.deleted && !op.pending && !op.conflict)
+        .sort((a, b) => b.date.localeCompare(a.date))
+        .slice(0, 50);
+      for (const row of report.references) {
+        const caption = element('label', 'Movimiento ' + row.movement_id + ' referencia ' + row.source_id);
+        const select = element('select');
+        const empty = element('option', 'Elegir el gasto original');
+        empty.value = '';
+        select.append(empty);
+        for (const op of candidates) {
+          const option = element('option', op.date + ' · ' + money(op.amount) + ' · ' + (op.description || op.id));
+          option.value = op.id;
+          select.append(option);
+        }
+        select.value = operationMapping[row.source_id] || '';
+        select.disabled = busy;
+        select.addEventListener('change', () => {
+          if (select.value) operationMapping[row.source_id] = select.value;
+          else delete operationMapping[row.source_id];
+          invalidate();
+          status.textContent = 'Vuelve a generar la vista previa para revisar las referencias.';
+        });
+        caption.append(select);
+        references.append(caption);
+      }
+      result.append(references);
     }
     details('Errores que debes corregir', report.errors);
     details('Filas y saldos para revisar', report.warnings);
@@ -164,7 +227,13 @@ export function renderData(container, {api, getView, today, synchronize, isCurre
     try {
       const encoded = committing ? expected.file : await fileBase64(item);
       if (!live()) return;
-      const input = {file:encoded, mapping:{...mapping}, include_before_cutoff:cutoff.checked};
+      const input = {
+        file:encoded,
+        mapping:{...mapping},
+        category_mapping:{...categoryMapping},
+        operation_mapping:{...operationMapping},
+        include_before_cutoff:cutoff.checked,
+      };
       if (committing) {
         input.preview_token = expected.token;
         if (expected.differences) input.ack_saldo = expected.token;
@@ -197,6 +266,8 @@ export function renderData(container, {api, getView, today, synchronize, isCurre
   form.addEventListener('submit', event => { event.preventDefault(); run(false); });
   file.addEventListener('change', () => {
     mapping = Object.create(null);
+    categoryMapping = Object.create(null);
+    operationMapping = Object.create(null);
     review = null;
     result.replaceChildren();
     status.textContent = '';

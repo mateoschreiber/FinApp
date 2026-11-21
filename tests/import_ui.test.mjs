@@ -69,7 +69,11 @@ function fixture(report) {
     return next;
   };
   const ctx = {
-    api, getView: () => ({ accounts: [] }), today: '2026-11-20',
+    api, getView: () => ({
+      accounts: [],
+      categories: [{ id: 'food', name: 'Comida', kind: 'expense' }],
+      operations: [{ id: 'expense-existing', kind: 'expense', date: '2026-03-01', amount: 500, description: 'Gasto previo' }],
+    }), today: '2026-11-20',
     synchronize: async () => {}, isCurrent: () => true,
   };
   renderData(container, ctx);
@@ -193,6 +197,56 @@ test('a double click only sends one confirmation', async () => {
   release();
   await settle();
   assert.deepEqual(calls, [1, 2], 'the second click was ignored while the first was in flight');
+});
+
+test('category links are offered and invalidate the preview', async () => {
+  const preview = {
+    accounts: [], categories: [{ id: 'cat-food', name: 'Comida externa', kind: 'expense', linked: null }],
+    references: [], added: 2, duplicates: 0, skipped: 0, errors: [], warnings: [],
+    differences: [], balances: {}, token: 'token-cat', committed: false,
+  };
+  const done = { ...preview, committed: true };
+  const f = fixture([preview, preview, done]);
+  f.file().files = [fakeFile()];
+  f.form().dispatch('submit');
+  await settle();
+  const select = f.container.all(n => n.tag === 'select').find(n => textOf(n.parentNode).includes('Comida externa'));
+  assert.ok(select, 'the category selector is rendered');
+  select.value = 'food';
+  select.dispatch('change');
+  assert.ok(f.confirmButton().disabled, 'changing a category link requires a new preview');
+  assert.ok(f.status().textContent.includes('vista previa'), 'the user is told to regenerate');
+  f.form().dispatch('submit');
+  await settle();
+  f.confirmButton().dispatch('click');
+  await settle();
+  const input = f.calls.at(-1).body;
+  assert.deepEqual(input.category_mapping, { 'cat-food': 'food' });
+});
+
+test('unresolved operation references offer a bounded selector and invalidate the preview', async () => {
+  const preview = {
+    accounts: [], categories: [], references: [{ source_id: 'e1', movement_id: 'r1' }],
+    added: 2, duplicates: 0, skipped: 0, errors: [], warnings: [],
+    differences: [], balances: {}, token: 'token-ref', committed: false,
+  };
+  const done = { ...preview, committed: true };
+  const f = fixture([preview, preview, done]);
+  f.file().files = [fakeFile()];
+  f.form().dispatch('submit');
+  await settle();
+  const select = f.container.all(n => n.tag === 'select').find(n => textOf(n.parentNode).includes('referencia e1'));
+  assert.ok(select, 'the reference selector is rendered');
+  assert.ok(textOf(select.parentNode).includes('Gasto previo'), 'existing expenses are offered');
+  select.value = 'expense-existing';
+  select.dispatch('change');
+  assert.ok(f.confirmButton().disabled, 'changing a reference requires a new preview');
+  f.form().dispatch('submit');
+  await settle();
+  f.confirmButton().dispatch('click');
+  await settle();
+  const input = f.calls.at(-1).body;
+  assert.deepEqual(input.operation_mapping, { e1: 'expense-existing' });
 });
 
 test('server rejection is shown and the confirmation is disabled', async () => {
