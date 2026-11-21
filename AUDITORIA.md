@@ -121,3 +121,57 @@ Mutación temporal: al comentar el re-render de `credit.mjs:162`, la prueba A fa
 ### Verificación F9.1A
 
 `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked` (53 Rust), `npm test` (40 JS), reconstrucción de `Dockerfile.test` y suite completa dentro de Docker: todo en verde. Sin cambios en migraciones ni en reglas financieras.
+
+## F9.1B — Exactitud de saldos, movimientos y patrimonio
+
+Nuevo archivo `tests/finance_invariants.rs` (6 pruebas). Todas usan `Database::open_memory()`, datos sintéticos, las rutas reales (`finance::apply`) y HTTP para `/api/planning/month/{month}`. Los valores esperados son **literales calculados a mano**; nunca se llama a `report()` ni a `balances_in()` como oráculo. El estado se comprueba con SQL directo sobre `finance_balance_postings` y `finance_postings`, más `PRAGMA integrity_check` y `PRAGMA foreign_key_check` en cada prueba.
+
+### Escenarios verificados (esperado = observado)
+
+| Escenario | Operación | Valores literales comprobados | Resultado |
+|---|---|---|---|
+| A — Ingresos y gastos | ingreso 500 banco, gasto 300 efectivo; iniciales 1000 y 200 | banco 1500, efectivo −100, patrimonio 1400, income 500, expense 300, net 200, cash_flow 200 | OK |
+| B — Transferencia | 400 de `a` (1000) a `b` (0) | origen 600, destino 400, patrimonio 1000, income/expense/net/cash_flow 0; postings −400/+400 | OK |
+| C — Reintegro | gasto 500 y reembolso 200; reembolso extra 301 | saldo y patrimonio −300, gasto neto 300, cash_flow −300; 301 rechazado sin escrituras; variante a otra cuenta: −500/+200, patrimonio −300 | OK |
+| D — Anulación | ingreso 700, borrado con versión 1, replay idéntico, versión obsoleta | efectos a 0; 1 operación tombstoned v2; historial con inserción + modificación; replay sin duplicar; versión obsoleta → Conflict sin cambios | OK |
+| E — Fechas de corte | cortes 15-Nov, 01-Nov, sin corte, y cruce 31-Dic/01-Ene | cut15 1150, cut01 540, nocut 90, patrimonio 1780, income 240, expense 160, net 80, cash_flow 80; año: Dic 300, Ene 370 | OK |
+| F — Pago de tarjeta | deuda inicial 300, banco 1000, pago 300 | banco 700, tarjeta 0, patrimonio 700 antes y después, income/expense/net 0, cash_flow −300 | OK |
+
+### Oráculos
+
+- Saldo = `initial_balance` de `finance_accounts` + `SUM(delta)` de `finance_balance_postings` (vista con filtro de corte), calculado con SQL crudo.
+- `finance_postings` se consulta directamente para verificar signos y la naturaleza interna de las transferencias y los pagos.
+- Informes: JSON de `/api/planning/month/...` comparado contra literales. `net_worth`, `net` y `cash_flow` se comprueban por separado; no se asume que coincidan.
+- Integridad SQLite: `integrity_check=ok` y `foreign_key_check=0` en las 6 pruebas.
+
+### Mutaciones temporales
+
+| Mutación | Prueba que falló | Restauración |
+|---|---|---|
+| `planning.rs`: reintegro con signo positivo | C (`expense` 700 en vez de 300) | revertida; `git diff` sin cambios en producción |
+| `planning.rs`: quitar inversión de signo de tarjeta | F (`net_worth` inicial 1300 en vez de 700) | revertida |
+| `finance.rs`: quitar `cutoff_date<=?2` al incluir el saldo inicial | E (cut15 150 en vez de 1150) | revertida |
+
+Cada mutación se ejecutó por separado con `cargo test --locked --test finance_invariants` (5 pasan / 1 falla) y se restauró antes de continuar. El diff final contiene solo el archivo de pruebas nuevo.
+
+### Reglas verificadas
+
+Saldo inicial con fecha de corte (`>=` incluye el día del corte), ingresos, gastos con signo de tarjeta, transferencias internas sin efecto patrimonial, reintegros topados y permisivos hacia otra cuenta no-tarjeta, anulaciones con reversión exacta e historial, y pago de tarjeta como cancelación de obligación (no gasto).
+
+### Ambigüedad conocida [AMB]
+
+`report.income/expense/net` y `cash_flow` **incluyen** movimientos anteriores a la fecha de corte, mientras que `balances` los excluye. En el escenario E, `expense=160` incluye el gasto de 100 previo al corte y `cash_flow=80` también, pero el saldo de cut15 solo cambia 150. Por eso `net` (80), `cash_flow` (80) y la variación patrimonial (180) no coinciden. Se documenta el comportamiento observado; **no se modificó la regla**.
+
+### Defectos
+
+Ninguno confirmado. El comportamiento de saldos negativos, reintegros a otra cuenta y la diferencia entre corte e informes son decisiones existentes, no errores nuevos.
+
+### Riesgos pendientes
+
+- Heredado de F9.1A: reenvío manual tras pérdida de respuesta y recarga de página puede duplicar un pago de crédito; sigue mitigado solo por revisión del historial.
+- La ambigüedad [AMB] de fechas de corte requiere decisión de negocio antes de cambiarla.
+- No se probaron informes con préstamos (deuda y amortización): queda para F9.2.
+
+### Verificación F9.1B
+
+`cargo test --locked --test finance_invariants` (6/6), `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked` (59 Rust: 24 lib + 14 auth + 8 finance_api + 6 finance_invariants + 3 full_flow + 4 import_load), `npm test` (40 JS), reconstrucción de `Dockerfile.test` y suite completa en Docker: todo en verde. Sin cambios de producción, migraciones ni credenciales.
