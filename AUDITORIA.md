@@ -477,3 +477,69 @@ Preview no persiste; confirmaciones rechazadas dejan 0 operaciones; los errores 
 - La causa intermitente de `SQLITE_BUSY` de F8.4 sigue abierta; F9.3C la medirá con respaldo concurrente.
 - Vincular una categoría archivada sigue permitido porque las reglas de importación actuales no aplican el filtro de archivadas; se documenta como decisión pendiente, no como defecto.
 - La UI de referencias muestra hasta 50 gastos candidatos; un gasto más antiguo requiere usar la API con `operation_mapping` explícito.
+
+## F9.3C — Atomicidad, concurrencia SQLite y respaldos
+
+### Modelo de concurrencia verificado
+
+- FinApp usa **una conexión SQLite** compartida por `Arc<Mutex<Connection>>` (`src/db.rs:9`); todas las peticiones HTTP se serializan por ese mutex.
+- La única contención SQLite real viene de **conexiones externas**: el script de respaldo, un segundo proceso o una herramienta administrativa.
+- La transacción de importación es DEFERRED (`src/exchange.rs:698-700`); cada fila usa un savepoint y el commit definitivo es el de la transacción externa.
+- `busy_timeout` efectivo: 5 s (rusqlite). En promoción de lectura a escritura DEFERRED, SQLite devuelve `SQLITE_BUSY` inmediatamente y no aplica ese timeout (confirmado en F8.4 y reproducido en C08/C09).
+- El respaldo usa `sqlite3 .backup` dentro del contenedor (`scripts/backup.sh:26`) y verifica `integrity_check` antes de copiar; la restauración aislada usa `scripts/restore-check.sh`.
+
+### Matriz C01–C12
+
+| Caso | Resultado | Observado |
+|---|---|---|
+| C01 importación normal | preview sin persistencia; confirmación exacta; 0 escrituras parciales | OK |
+| C02 fila inválida | error en preview; confirmación bloqueada; 0 operaciones | OK |
+| C03 error dentro de un savepoint | fila revertida; transacción externa sin commit; 0 operaciones | OK |
+| C04 error SQLite después de varias filas | trigger de prueba aborta la fila 4; confirmación bloqueada; 0 operaciones | OK |
+| C05 error de commit | **no reproducible de forma determinista** sin mockear SQLite; se documenta la limitación y se cubre el caso equivalente con C04 | LIMITACIÓN |
+| C06 confirmación repetida | 409; 1 operación; sin duplicados | OK |
+| C07 cambio entre preview y confirmación | token recalculado distinto → 409; 0 escrituras | OK |
+| C08 bloqueos entre conexiones | lector + escritor: 5,54 s hasta `SQLITE_BUSY`; escritor externo + importador: `SQLITE_BUSY` inmediato en promoción DEFERRED; IMMEDIATE espera 5,53 s | OK |
+| C09 DEFERRED vs IMMEDIATE | DEFERRED falla en 164 µs en promoción; IMMEDIATE espera 5,53 s y falla con `SQLITE_BUSY` tras el timeout | OK |
+| C10 25.000 movimientos | 25.000 operaciones, 25.002 `import_sources`, `integrity_check=ok`, `foreign_key_check=0`; suite en 20,8 s | OK |
+| C11 respaldo concurrente | respaldo verificado con SHA-256 e `integrity_check=ok`; importación confirmada en 0,997 s; el respaldo capturó el estado anterior (7.000 operaciones) y la importación añadió 5.000 más | OK |
+| C12 restauración aislada | `restore-check.sh` verificó integridad y `/health` con la imagen `finapp:local` | OK |
+
+### Comparativa DEFERRED / IMMEDIATE
+
+| Estrategia | Bajo escritor externo | Tiempo | Conclusión |
+|---|---|---|---|
+| DEFERRED | falla inmediatamente en la promoción lectura→escritura | 164 µs | actual, predecible pero sin espera |
+| IMMEDIATE | espera `busy_timeout` y falla con `SQLITE_BUSY` | 5,53 s | más tolerante, pero cambia el contrato público (409 → 500) y retiene el bloqueo más tiempo |
+
+**Decisión:** se mantiene DEFERRED. El cambio a IMMEDIATE mejoraría la tolerancia, pero alteraría el contrato HTTP actual (409 «La vista previa cambió» → 500 «No se pudo consultar la base de datos») y aumentaría la retención del bloqueo durante importaciones largas. El incidente histórico sigue sin reproducirse; no hay evidencia suficiente para cambiar el contrato.
+
+### Respaldo y restauración (stack sintético aislado)
+
+- Compose proyecto exclusivo `finapp-f93c-20261121003908`, volumen `finapp-f93c-20261121003908_f93c_data`, red propia, sin puertos publicados, imagen `finapp:local`.
+- Respaldo 1 (estado 2.000 movimientos): `finapp-20261121T034357Z-4Flx0e00.sqlite`, 4.308.992 bytes, SHA-256 verificado, `integrity_check=ok`, `foreign_key_check=0`, `restore-check.sh` OK.
+- Respaldo 2 (concurrente con importación de 5.000 movimientos): `finapp-20261121T034639Z-jf2fTZkQ.sqlite`, 14.524.416 bytes, SHA-256 verificado, `integrity_check=ok`, `foreign_key_check=0`, `restore-check.sh` OK; el respaldo contiene 7.000 operaciones (estado anterior al commit concurrente).
+- El respaldo se ejecutó dentro de un contenedor `docker:cli` con el socket de Docker montado, porque Git Bash en Windows traduce `/data` a una ruta local y rompe `backup.sh`. El stack sintético se destruyó con `docker compose down --volumes` y el directorio temporal se eliminó.
+
+### Incidente histórico (fila ~19.614)
+
+**No reproducido.** Se repitieron importaciones de 25.000 movimientos y escenarios de contención controlada; el fallo intermitente no reapareció. Se mantiene clasificado como hipótesis compatible con `SQLITE_BUSY` por promoción DEFERRED bajo un escritor externo, pero sin confirmación.
+
+### Mutaciones (restauradas; diff limpio)
+
+| Mutación | Prueba que falló | Nota |
+|---|---|---|
+| Confirmar el savepoint de una fila fallida | ninguna | la transacción externa sigue revirtiendo; evidencia de doble barrera |
+| Ignorar los errores de fila | C02 | detectada |
+| Aceptar un `preview_token` desactualizado | C07 | detectada |
+| Ignorar un error real de commit | no ejecutada | no reproducible sin mockear SQLite; documentado como limitación |
+
+### Validación
+
+`cargo test --locked --test import_concurrency` (8/8), `cargo fmt --check`, `clippy -D warnings`, `cargo test --locked` (**140 Rust**: 41 lib, 14 auth, 16 credit_flows, 2 credit_migration, 8 finance_api, 6 finance_invariants, 3 full_flow, 8 import_concurrency, 38 import_integrity, 4 import_load), `npm test` (**62 JS**), build y suite Docker: todo en verde. Cero pruebas ignoradas.
+
+### Riesgos residuales
+
+- `SQLITE_BUSY` bajo escritor externo sigue produciendo 409 inmediato; es el contrato actual y no se cambió.
+- El fallo histórico de la fila ~19.614 sigue sin reproducción.
+- No se activó WAL ni se cambió `busy_timeout`; la contención con herramientas externas sigue siendo posible.

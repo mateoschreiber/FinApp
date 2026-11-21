@@ -116,7 +116,7 @@ fn post_import(value: &Value, cookie: &str, user: &str) -> Request<Body> {
 async fn importing_25k_rows_measures_the_shared_connection_lock() {
     let db = Database::open_memory().unwrap();
     db.bootstrap_admin("alice", PASSWORD).unwrap();
-    let router = app(db, ORIGIN.into());
+    let router = app(db.clone(), ORIGIN.into());
     let login = router
         .clone()
         .oneshot(
@@ -237,6 +237,37 @@ async fn importing_25k_rows_measures_the_shared_connection_lock() {
         worst_health < Duration::from_secs(30),
         "/health stalled {worst_health:?} during the import"
     );
+
+    // C10: exact persisted counts and structural integrity after the 25k import.
+    {
+        let conn = db.0.lock().unwrap();
+        let operations: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM finance_operations WHERE user_id=?1",
+                [&user_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(operations, MOVEMENTS as i64);
+        let sources: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM import_sources WHERE user_id=?1",
+                [&user_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(sources, MOVEMENTS as i64 + 2);
+        let check: String = conn
+            .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(check, "ok");
+        let fk: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(fk, 0);
+    }
 }
 
 async fn login_user(router: &Router) -> (String, String) {
