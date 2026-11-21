@@ -356,3 +356,63 @@ Deuda total = saldo de tarjeta; saldo bancario = efectivo; cuotas contractuales 
 **Sin verificación en navegador**: no se usó Chrome DevTools; la correspondencia backend/frontend se comprobó con el fixture compartido y pruebas deterministas. Queda sin comprobar el render real de la tabla de proyección en `planning.mjs`.
 
 Riesgos para F9.3: la proyección no modela intereses futuros sobre saldos pendientes (usa la tabla contractual original) y `creditProjection` ignora la deuda de tarjetas sin `cutoff_date`; ambos son comportamientos actuales documentados.
+
+## F9.3A — Saldos importados y aceptación explícita
+
+### Política aprobada (Opción 2)
+
+Toda discrepancia entre `saldo_actual` y el saldo calculado requiere aceptación explícita vinculada a la vista previa revisada. La aceptación nunca ajusta saldos ni crea operaciones; solo autoriza el commit de la importación. Sin discrepancias, el flujo queda igual que antes.
+
+### Implementación
+
+- `Upload` incorpora `ack_saldo: Option<String>` con `#[serde(default)]` (`src/exchange.rs`).
+- `Preview` incorpora `differences: Vec<BalanceDiscrepancy>` con `account_id`, `declared_balance`, `calculated_balance` y `difference` en enteros exactos; los `warnings` de texto se conservan por compatibilidad.
+- La confirmación exige `ack_saldo == preview_token` cuando hay diferencias; los errores siguen bloqueando aunque exista aceptación. El token ya incluye archivo, usuario, mapeos, flag de corte y el reporte completo, por lo que una aceptación no puede autorizar otra vista previa.
+- `static/extras.mjs` muestra una sección «Diferencias de saldo a aceptar» con importes formateados, una casilla inicialmente desmarcada y el botón de confirmación deshabilitado hasta aceptar. Cambiar archivo, mapeo o flag de corte invalida la aceptación. No se envía `ack_saldo` cuando no hay diferencias.
+
+### Oráculos corregidos
+
+El escenario A del plan se corrigió: saldo inicial 1.000 con gasto 100 produce saldo calculado 900; con `saldo_actual=900` no hay diferencia. Los casos con `saldo_actual` 1.000 y 800 cubren diferencias positivas y negativas.
+
+| Caso | Esperado = observado | Ack requerido |
+|---|---|---|
+| A coincidencia | calculado 900, declarado 900, `differences=[]` | No |
+| B declarado superior | declarado 1000, calculado 900, diferencia 100 | Sí; sin ack o con ack incorrecto → 409 y 0 escrituras |
+| C declarado inferior | declarado 800, calculado 900, diferencia −100 | Sí; el saldo queda 900 |
+| D tarjeta positiva | declarado 300, calculado 300 (deuda) | No |
+| E tarjeta negativa | declarado −300, calculado −300 (crédito) | No |
+| F fecha de corte | movimiento anterior excluido del saldo; aviso de histórico | No |
+| G cuenta existente vinculada | declarado 800, calculado 900 por operaciones previas | Sí |
+| H múltiples cuentas | solo la discrepante aparece en `differences` | Sí |
+| I saldo_actual ausente | `differences=[]` | No |
+| J historial parcial | declarado 500, calculado 900, diferencia −400 | Sí; no se crea ajuste |
+
+Casos adicionales verificados: ack de otra vista previa → 409; archivo o mapeo modificado → 409; errores con ack → 409 y 0 escrituras; confirmación repetida tras commit → 409 sin duplicar; usuario ajeno con token de otro → 409; vista previa sin diferencias confirmada sin ack; peticiones directas a la API sin interfaz.
+
+### Compatibilidad
+
+- Campos aditivos: clientes antiguos pueden seguir enviando `Upload` sin `ack_saldo`; solo verán 409 si intentan confirmar una vista previa con diferencias, que es la política aprobada. `Preview` agrega `differences` sin quitar campos.
+- No hay migraciones ni cambios en `import_sources`, `finance_postings` o V1/V2.
+
+### Mutaciones (todas detectadas y restauradas)
+
+| Mutación | Prueba que falló |
+|---|---|
+| Quitar la validación de `ack_saldo` en el servidor | B (confirmó sin aceptación) |
+| Habilitar la confirmación sin aceptación en la interfaz | Prueba JS de diferencias |
+| Aceptar cualquier ack no vacío (reutilizar una vista vieja) | `stale_ack_from_another_preview_is_rejected` |
+| Invertir el signo de `difference` | C (−100 vs 100) |
+
+### Atomicidad verificada
+
+Preview no persiste; confirmaciones rechazadas dejan 0 operaciones; los errores bloquean el commit aunque exista ack; la confirmación autorizada persiste exactamente las filas previstas; los savepoints por fila se confirman definitivamente con la transacción externa. `integrity_check=ok` y `foreign_key_check=0` en cada escenario.
+
+### Validación
+
+`cargo test --locked --test import_integrity` (15/15), `node --test tests/import_ui.test.mjs` (5/5), `cargo fmt --check`, `clippy -D warnings`, `cargo test --locked` (**109 Rust**: 41 lib, 14 auth, 16 credit_flows, 2 credit_migration, 8 finance_api, 6 finance_invariants, 3 full_flow, 15 import_integrity, 4 import_load), `npm test` (**60 JS**), build y suite Docker: todo en verde. Cero pruebas ignoradas.
+
+### Riesgos residuales
+
+- La causa intermitente de `SQLITE_BUSY` de F8.4 sigue abierta; F9.3C la medirá.
+- Un cliente antiguo que intente confirmar diferencias recibirá 409 hasta actualizarse: es el comportamiento aprobado.
+- F9.3B (mapeos de categorías y referencias) y F9.3D (conciliación CSV) quedan pendientes.

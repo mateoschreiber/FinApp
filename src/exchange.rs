@@ -42,6 +42,9 @@ struct Upload {
     #[serde(default)]
     include_before_cutoff: bool,
     preview_token: Option<String>,
+    /// Explicit acceptance of saldo_actual differences; must repeat the preview token.
+    #[serde(default)]
+    ack_saldo: Option<String>,
 }
 
 #[derive(Default, Serialize)]
@@ -52,9 +55,19 @@ struct Preview {
     skipped: usize,
     errors: Vec<String>,
     warnings: Vec<String>,
+    /// Structured saldo_actual differences; the warnings above stay for compatibility.
+    differences: Vec<BalanceDiscrepancy>,
     balances: BTreeMap<String, String>,
     token: String,
     committed: bool,
+}
+
+#[derive(Serialize)]
+struct BalanceDiscrepancy {
+    account_id: String,
+    declared_balance: i64,
+    calculated_balance: i64,
+    difference: i64,
 }
 #[derive(Serialize)]
 struct SourceAccount {
@@ -660,6 +673,19 @@ fn run(
             import.report.warnings.push(format!(
                 "Cuenta {id}: saldo esperado {expected}, saldo calculado {balance}."
             ));
+            if balance.abs() <= i128::from(finance::SAFE) {
+                let difference = i128::from(*expected) - balance;
+                if let (Ok(calculated), Ok(difference)) =
+                    (i64::try_from(balance), i64::try_from(difference))
+                {
+                    import.report.differences.push(BalanceDiscrepancy {
+                        account_id: id.clone(),
+                        declared_balance: *expected,
+                        calculated_balance: calculated,
+                        difference,
+                    });
+                }
+            }
         }
         import.report.balances.insert(id, balance.to_string());
     }
@@ -720,6 +746,13 @@ async fn import(
                 return Err((
                     StatusCode::CONFLICT,
                     "La vista previa cambió. Vuelve a revisarla antes de importar.".into(),
+                ));
+            }
+            if !report.differences.is_empty() && input.ack_saldo.as_deref() != Some(token.as_str())
+            {
+                return Err((
+                    StatusCode::CONFLICT,
+                    "Hay diferencias de saldo. Marca la aceptación de la vista previa antes de importar.".into(),
                 ));
             }
             tx.commit()

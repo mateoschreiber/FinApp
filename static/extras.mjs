@@ -24,6 +24,10 @@ async function fileBase64(file) {
   return btoa(chunks.join(''));
 }
 
+function money(value) {
+  return new Intl.NumberFormat('es-PY').format(BigInt(value)) + ' Gs.';
+}
+
 export function renderData(container, {api, getView, today, synchronize, isCurrent}) {
   const content = element('div');
   container.replaceChildren(content);
@@ -105,12 +109,39 @@ export function renderData(container, {api, getView, today, synchronize, isCurre
     details('Filas y saldos para revisar', report.warnings);
     const names = new Map(existing.map(account => [account.id, account.name]));
     for (const row of report.accounts) names.set(row.linked || row.id, row.name);
+    let acked = !report.differences.length;
+    if (report.differences.length) {
+      const group = element('details');
+      group.open = true;
+      group.append(element('summary', 'Diferencias de saldo a aceptar (' + report.differences.length + ')'));
+      const list = element('ul');
+      for (const row of report.differences) {
+        list.append(element('li',
+          (names.get(row.account_id) || row.account_id)
+          + ' · declarado ' + money(row.declared_balance)
+          + ' · calculado ' + money(row.calculated_balance)
+          + ' · diferencia ' + money(row.difference)));
+      }
+      group.append(list);
+      const label = element('label');
+      label.className = 'checkbox';
+      const accept = element('input');
+      accept.type = 'checkbox';
+      accept.addEventListener('change', () => {
+        acked = accept.checked;
+        save.disabled = !!report.errors.length || !acked;
+        status.textContent = accept.checked ? '' : 'Marca la aceptación para poder importar.';
+      });
+      label.append(accept, document.createTextNode(' He revisado las diferencias de saldo y acepto importar estos movimientos sin ajustar automáticamente los balances.'));
+      group.append(label);
+      result.append(group);
+    }
     details('Saldos después de importar', Object.entries(report.balances).map(([id,balance]) =>
-      (names.get(id) || id) + ' · ' + new Intl.NumberFormat('es-PY').format(BigInt(balance)) + ' Gs.'));
+      (names.get(id) || id) + ' · ' + money(balance)));
     const save = element('button', 'Confirmar importación');
     save.type = 'button';
     save.dataset.confirm = '';
-    save.disabled = !!report.errors.length;
+    save.disabled = !!report.errors.length || !acked;
     save.addEventListener('click', () => {
       if (review && confirm('¿Importar las filas de esta vista previa?')) run(true);
     });
@@ -134,11 +165,14 @@ export function renderData(container, {api, getView, today, synchronize, isCurre
       const encoded = committing ? expected.file : await fileBase64(item);
       if (!live()) return;
       const input = {file:encoded, mapping:{...mapping}, include_before_cutoff:cutoff.checked};
-      if (committing) input.preview_token = expected.token;
+      if (committing) {
+        input.preview_token = expected.token;
+        if (expected.differences) input.ack_saldo = expected.token;
+      }
       const report = await api('/api/import/xlsx', 'POST', input);
       if (!live()) return;
       busy = false;
-      review = {file:encoded, token:report.token};
+      review = {file:encoded, token:report.token, differences: !!report.differences?.length};
       if (report.committed) {
         review = null;
         result.replaceChildren();
