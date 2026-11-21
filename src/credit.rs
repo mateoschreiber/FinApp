@@ -808,6 +808,88 @@ mod tests {
     }
 
     #[test]
+    fn two_identical_legitimate_repayments_are_both_persisted() {
+        let db = Database::open_memory().unwrap();
+        db.0.lock()
+            .unwrap()
+            .execute("INSERT INTO users VALUES('a','a','-',0)", [])
+            .unwrap();
+        finance::save_account(
+            &db,
+            "a",
+            &finance::Account {
+                id: "bank".into(),
+                kind: "bank".into(),
+                name: "bank".into(),
+                initial_balance: 0,
+            },
+        )
+        .unwrap();
+        finance::save_category(
+            &db,
+            "a",
+            &finance::Category {
+                id: "fee".into(),
+                kind: "expense".into(),
+                name: "Comisión".into(),
+            },
+        )
+        .unwrap();
+        let loan = Command {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            entry: Entry::Loan {
+                name: "Préstamo".into(),
+                account_id: "bank".into(),
+                principal: 1000,
+                date: "2025-01-02".into(),
+                first_due: "2025-02-02".into(),
+                periods: 2,
+                method: "german".into(),
+                rate_bps: 0,
+                rate_type: "nominal".into(),
+            },
+        };
+        mutate(&db, "a", &loan).unwrap();
+        let repayment = |request_id: String| Command {
+            request_id,
+            entry: Entry::Repayment {
+                loan_id: loan.request_id.clone(),
+                account_id: "bank".into(),
+                date: "2025-02-01".into(),
+                principal: 200,
+                interest: 10,
+                fee: 1,
+                category_id: Some("fee".into()),
+            },
+        };
+        // Two different logical operations with identical data: both must be recorded.
+        mutate(&db, "a", &repayment(uuid::Uuid::new_v4().to_string())).unwrap();
+        mutate(&db, "a", &repayment(uuid::Uuid::new_v4().to_string())).unwrap();
+        let view = portfolio(&db, "a").unwrap();
+        assert_eq!(view.loans[0].payments.len(), 2);
+        assert_eq!(view.loans[0].outstanding, 600);
+        let conn = db.0.lock().unwrap();
+        let ops: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM finance_operations WHERE user_id='a'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(ops, 7);
+        let check: String = conn
+            .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(check, "ok");
+        let fk: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(fk, 0);
+    }
+
+    #[test]
     fn cancelling_rectifies_purchases_and_repayments_atomically() {
         let db = Database::open_memory().unwrap();
         db.0.lock()

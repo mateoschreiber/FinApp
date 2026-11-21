@@ -933,6 +933,55 @@ mod tests {
     }
 
     #[test]
+    fn replaying_a_request_keeps_a_single_balance_delta() {
+        let db = setup();
+        let first = apply_json(
+            &db,
+            "r",
+            "expense-1",
+            0,
+            json!({"kind":"expense","category_id":"food","amount":100}),
+        )
+        .unwrap();
+        let replay = apply_json(
+            &db,
+            "r",
+            "expense-1",
+            0,
+            json!({"kind":"expense","category_id":"food","amount":100}),
+        )
+        .unwrap();
+        assert_eq!(first, replay);
+        let conn = db.0.lock().unwrap();
+        let ops: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM finance_operations WHERE user_id='u'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(ops, 1);
+        let delta: i64 = conn
+            .query_row(
+                "SELECT COALESCE(SUM(delta),0) FROM finance_balance_postings WHERE user_id='u' AND account_id='cash'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(delta, -100);
+        let check: String = conn
+            .query_row("PRAGMA integrity_check", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(check, "ok");
+        let fk: i64 = conn
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+        assert_eq!(fk, 0);
+    }
+
+    #[test]
     fn basic_operations_reject_cards_as_payment_source_and_bad_references() {
         let db = setup();
         apply_json(
