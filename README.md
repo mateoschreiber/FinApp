@@ -6,7 +6,7 @@ Aplicación de finanzas personales con servidor Rust, SQLite y una interfaz web 
 
 1. Después de iniciar sesión, elige **Crear mi primera cuenta**. Agrega efectivo, banco, billetera o tarjeta. Al indicar una fecha de corte, carga el saldo al inicio de ese día. Los movimientos previos siguen visibles en el historial.
 2. Crea una categoría o elige las sugeridas en **Configuración**. Registra ingresos, gastos, transferencias y pagos de tarjeta desde **Nuevo movimiento**. Para un reintegro, selecciona el gasto original y la cuenta que recibe el dinero.
-3. Usa **Créditos** para compras en cuotas, resúmenes y préstamos. FinApp registra el gasto completo de una compra financiada en la fecha de compra. Consulta cuotas y vencimientos por separado.
+3. Usa **Créditos** para compras en cuotas, resúmenes y préstamos. FinApp registra el gasto completo de una compra financiada en la fecha de compra. Consulta cuotas y vencimientos por separado. Los préstamos creados a partir de la migración 009 usan el sistema V2 (interés nominal calculado con aritmética entera exacta); los préstamos anteriores conservan su proyección original V1. No se recalculan pagos ya registrados.
 4. En **Planificación**, selecciona un mes para consultar el resultado, el patrimonio y los vencimientos. Allí puedes gestionar presupuestos, recurrentes, objetivos y comprobantes, y marcar el mes como revisado.
 5. En **Importar y exportar**, revisa y confirma un XLSX con las hojas `Cuentas`, `Categorias` y `Movimientos`. La vista previa muestra referencias y diferencias antes de escribir. También puedes conciliar extractos CSV y descargar cuentas, movimientos e informes.
 

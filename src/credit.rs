@@ -151,6 +151,17 @@ fn due_date(first: (u32, u32, u32), index: u16) -> Result<String> {
         d.min(last_day(year, month))
     ))
 }
+const NOMINAL_DENOMINATOR: i128 = 120_000;
+
+// V2: nominal monthly interest from an exact positive rational, half up.
+fn nominal_interest(remaining: i64, rate_bps: u32) -> Result<i64> {
+    let numerator = i128::from(remaining) * i128::from(rate_bps);
+    let rounded = (numerator * 2 + NOMINAL_DENOMINATOR) / (NOMINAL_DENOMINATOR * 2);
+    i64::try_from(rounded).map_err(|_| StatusCode::BAD_REQUEST)
+}
+
+// V1 is kept for loans created before migration 009; callers with a stored
+// schedule_version must use schedule_v().
 fn schedule(
     principal: i64,
     first: &str,
@@ -159,8 +170,21 @@ fn schedule(
     rate_bps: u32,
     rate_type: &str,
 ) -> Result<Vec<Due>> {
+    schedule_v(principal, first, periods, method, rate_bps, rate_type, 1)
+}
+
+fn schedule_v(
+    principal: i64,
+    first: &str,
+    periods: u16,
+    method: &str,
+    rate_bps: u32,
+    rate_type: &str,
+    version: u8,
+) -> Result<Vec<Due>> {
     require(
-        (1..=SAFE).contains(&principal)
+        matches!(version, 1 | 2)
+            && (1..=SAFE).contains(&principal)
             && (1..=600).contains(&periods)
             && i64::from(periods) <= principal
             && matches!(method, "french" | "german")
@@ -183,7 +207,11 @@ fn schedule(
     let mut remaining = principal;
     let mut result = Vec::with_capacity(usize::from(periods));
     for i in 0..periods {
-        let interest = (remaining as f64 * rate).round() as i64;
+        let interest = if version == 2 && rate_type == "nominal" {
+            nominal_interest(remaining, rate_bps)?
+        } else {
+            (remaining as f64 * rate).round() as i64
+        };
         let capital = if i + 1 == periods {
             remaining
         } else if method == "german" || rate_bps == 0 {
@@ -348,8 +376,8 @@ fn mutate(db: &Database, user: &str, command: &Command) -> Result<()> {
             rate_type,
         } => {
             require(valid_name(name) && first_due >= date)?;
-            schedule(
-                *principal, first_due, *periods, method, *rate_bps, rate_type,
+            schedule_v(
+                *principal, first_due, *periods, method, *rate_bps, rate_type, 2,
             )?;
             post(
                 &tx,
@@ -366,7 +394,8 @@ fn mutate(db: &Database, user: &str, command: &Command) -> Result<()> {
                 },
             )?;
             tx.execute(
-                "INSERT INTO credit_loans VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                "INSERT INTO credit_loans(user_id,id,name,account_id,principal,draw_date,first_due,periods,method,rate_bps,rate_type,schedule_version)
+                 VALUES(?,?,?,?,?,?,?,?,?,?,?,2)",
                 params![
                     user, id, name, account_id, principal, date, first_due, periods, method,
                     rate_bps, rate_type
@@ -521,7 +550,7 @@ fn portfolio(db: &Database, user: &str) -> Result<Portfolio> {
         purchases: vec![],
         allocations: vec![],
     };
-    let mut statement=conn.prepare("SELECT id,name,principal,account_id,draw_date,first_due,periods,method,rate_bps,rate_type FROM credit_loans WHERE user_id=? ORDER BY draw_date,id").map_err(database)?;
+    let mut statement=conn.prepare("SELECT id,name,principal,account_id,draw_date,first_due,periods,method,rate_bps,rate_type,schedule_version FROM credit_loans WHERE user_id=? ORDER BY draw_date,id").map_err(database)?;
     let mut loans = statement.query([user]).map_err(database)?;
     let mut repayment_query=conn.prepare("SELECT id,date,principal,interest,fee FROM credit_repayments WHERE user_id=? AND loan_id=? ORDER BY date,id").map_err(database)?;
     while let Some(row) = loans.next().map_err(database)? {
@@ -530,13 +559,15 @@ fn portfolio(db: &Database, user: &str) -> Result<Portfolio> {
         let method: String = row.get(7).map_err(database)?;
         let rate_bps = row.get(8).map_err(database)?;
         let rate_type: String = row.get(9).map_err(database)?;
-        let installments = schedule(
+        let version: u8 = row.get(10).map_err(database)?;
+        let installments = schedule_v(
             principal,
             &row.get::<_, String>(5).map_err(database)?,
             row.get(6).map_err(database)?,
             &method,
             rate_bps,
             &rate_type,
+            version,
         )?;
         let payments = repayment_query
             .query_map(params![user, id], |r| {
@@ -621,6 +652,236 @@ pub fn routes() -> Router<AppState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Independent oracle for positive rational rounding (half up). Used only by
+    // the precision test; the rest of the expected values are hardcoded literals.
+    fn round_half_up(numerator: i128, denominator: i128) -> i128 {
+        (numerator * 2 + denominator) / (denominator * 2)
+    }
+    fn expected(dues: &[(&str, i64, i64)]) -> Vec<Due> {
+        dues.iter()
+            .map(|(date, principal, interest)| Due {
+                date: (*date).to_string(),
+                principal: *principal,
+                interest: *interest,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a01_french_nominal_reference() {
+        let plan = schedule(1200000, "2025-01-01", 3, "french", 1200, "nominal").unwrap();
+        assert_eq!(
+            plan,
+            expected(&[
+                ("2025-01-01", 396027, 12000),
+                ("2025-02-01", 399987, 8040),
+                ("2025-03-01", 403986, 4040),
+            ])
+        );
+        assert_eq!(plan.iter().map(|p| p.principal).sum::<i64>(), 1200000);
+        assert_eq!(plan.iter().map(|p| p.interest).sum::<i64>(), 24080);
+    }
+
+    #[test]
+    fn a02_german_nominal_reference() {
+        let plan = schedule(1200000, "2025-01-01", 3, "german", 1200, "nominal").unwrap();
+        assert_eq!(
+            plan,
+            expected(&[
+                ("2025-01-01", 400000, 12000),
+                ("2025-02-01", 400000, 8000),
+                ("2025-03-01", 400000, 4000),
+            ])
+        );
+        assert_eq!(plan.iter().map(|p| p.interest).sum::<i64>(), 24000);
+        assert_eq!(plan.iter().map(|p| p.principal).sum::<i64>(), 1200000);
+    }
+
+    #[test]
+    fn a03_french_effective_reference() {
+        // Monthly effective rate (1.12)^(1/12)-1 = 0.009488792934582935
+        // (computed independently by bisection of (1+r)^12 = 1.12).
+        let plan = schedule(1200000, "2025-01-01", 3, "french", 1200, "effective").unwrap();
+        assert_eq!(
+            plan,
+            expected(&[
+                ("2025-01-01", 396228, 11387),
+                ("2025-02-01", 399988, 7627),
+                ("2025-03-01", 403784, 3831),
+            ])
+        );
+        assert_eq!(plan.iter().map(|p| p.principal).sum::<i64>(), 1200000);
+    }
+
+    #[test]
+    fn a04_zero_rate() {
+        let plan = schedule(100, "2025-01-01", 3, "french", 0, "nominal").unwrap();
+        assert_eq!(
+            plan,
+            expected(&[
+                ("2025-01-01", 34, 0),
+                ("2025-02-01", 33, 0),
+                ("2025-03-01", 33, 0),
+            ])
+        );
+        assert_eq!(plan.iter().map(|p| p.principal).sum::<i64>(), 100);
+    }
+
+    #[test]
+    fn a05_small_principal() {
+        let plan = schedule(100, "2025-01-01", 3, "french", 1200, "nominal").unwrap();
+        assert_eq!(
+            plan,
+            expected(&[
+                ("2025-01-01", 33, 1),
+                ("2025-02-01", 33, 1),
+                ("2025-03-01", 34, 0),
+            ])
+        );
+        assert_eq!(plan.iter().map(|p| p.principal).sum::<i64>(), 100);
+    }
+
+    #[test]
+    fn a06_half_guarani_rounding() {
+        // 50 * 1200 / 120000 = 0.5 -> half up = 1.
+        let plan = schedule(50, "2025-01-01", 1, "french", 1200, "nominal").unwrap();
+        assert_eq!(plan, expected(&[("2025-01-01", 50, 1)]));
+        assert_eq!(plan[0].principal + plan[0].interest, 51);
+    }
+
+    #[test]
+    fn a07_single_period() {
+        let plan = schedule(1000, "2025-01-01", 1, "french", 1200, "nominal").unwrap();
+        assert_eq!(plan, expected(&[("2025-01-01", 1000, 10)]));
+    }
+
+    #[test]
+    fn a08_six_hundred_periods() {
+        let plan = schedule(600, "2025-01-01", 600, "german", 1200, "nominal").unwrap();
+        assert_eq!(plan.len(), 600);
+        assert_eq!(plan.iter().map(|p| p.principal).sum::<i64>(), 600);
+        assert!(plan.iter().all(|p| p.principal == 1 && p.interest >= 0));
+        assert_eq!(plan[0].interest, 6);
+        assert_eq!(plan[599].interest, 0);
+    }
+
+    #[test]
+    fn a09_leap_year() {
+        let plan = schedule(100, "2024-02-29", 2, "german", 0, "nominal").unwrap();
+        assert_eq!(
+            plan,
+            expected(&[("2024-02-29", 50, 0), ("2024-03-29", 50, 0)])
+        );
+        assert_eq!(plan.iter().map(|p| p.principal).sum::<i64>(), 100);
+    }
+
+    #[test]
+    fn a10_month_and_year_rollover() {
+        let plan = schedule(100, "2024-03-31", 2, "german", 0, "nominal").unwrap();
+        assert_eq!(plan[0].date, "2024-03-31");
+        assert_eq!(plan[1].date, "2024-04-30");
+        let year = schedule(100, "2026-12-31", 2, "german", 0, "nominal").unwrap();
+        assert_eq!(year[0].date, "2026-12-31");
+        assert_eq!(year[1].date, "2027-01-31");
+        assert_eq!(year.iter().map(|p| p.principal).sum::<i64>(), 100);
+    }
+
+    #[test]
+    fn a11_large_principal_precision_v2() {
+        const P: i64 = 7_000_000_000_000_003;
+        // Nominal monthly rate = 7000/120000 = 7/120. Exact interest is rational:
+        // round_half_up(P * 7000 / 120000) = 408333333333334.
+        let exact = round_half_up(i128::from(P) * 7_000, 120_000);
+        assert_eq!(exact, 408_333_333_333_334);
+        let exact = i64::try_from(exact).unwrap();
+        let plan = schedule_v(P, "2025-01-01", 1, "french", 7000, "nominal", 2).unwrap();
+        assert_eq!(plan.len(), 1);
+        assert_eq!(plan[0].principal, P);
+        assert_eq!(
+            plan[0].interest, exact,
+            "V2 must match the rational reference"
+        );
+    }
+
+    #[test]
+    fn a11_v1_keeps_the_historical_interest() {
+        const P: i64 = 7_000_000_000_000_003;
+        let legacy = schedule_v(P, "2025-01-01", 1, "french", 7000, "nominal", 1).unwrap();
+        assert_eq!(legacy[0].principal, P);
+        assert_eq!(legacy[0].interest, 408_333_333_333_333);
+        assert_eq!(
+            schedule(P, "2025-01-01", 1, "french", 7000, "nominal").unwrap()[0].interest,
+            legacy[0].interest
+        );
+    }
+
+    #[test]
+    fn v2_french_multi_period_conserves_capital() {
+        let plan = schedule_v(1200000, "2025-01-01", 3, "french", 1200, "nominal", 2).unwrap();
+        assert_eq!(
+            plan,
+            expected(&[
+                ("2025-01-01", 396027, 12000),
+                ("2025-02-01", 399987, 8040),
+                ("2025-03-01", 403986, 4040),
+            ])
+        );
+        assert_eq!(plan.last().unwrap().principal, 403_986);
+        assert_eq!(plan.iter().map(|p| p.principal).sum::<i64>(), 1200000);
+    }
+
+    #[test]
+    fn v2_german_and_effective_match_v1() {
+        let german = schedule_v(1200000, "2025-01-01", 3, "german", 1200, "nominal", 2).unwrap();
+        assert_eq!(
+            german,
+            expected(&[
+                ("2025-01-01", 400000, 12000),
+                ("2025-02-01", 400000, 8000),
+                ("2025-03-01", 400000, 4000),
+            ])
+        );
+        let effective =
+            schedule_v(1200000, "2025-01-01", 3, "french", 1200, "effective", 2).unwrap();
+        assert_eq!(
+            effective,
+            expected(&[
+                ("2025-01-01", 396228, 11387),
+                ("2025-02-01", 399988, 7627),
+                ("2025-03-01", 403784, 3831),
+            ])
+        );
+        assert_eq!(effective.iter().map(|p| p.principal).sum::<i64>(), 1200000);
+    }
+
+    #[test]
+    fn v2_half_guarani_and_safe_limits() {
+        assert_eq!(
+            schedule_v(50, "2025-01-01", 1, "french", 1200, "nominal", 2).unwrap(),
+            expected(&[("2025-01-01", 50, 1)])
+        );
+        let safe = schedule_v(SAFE, "2025-01-01", 1, "french", 0, "nominal", 2).unwrap();
+        assert_eq!(safe[0].principal, SAFE);
+        assert_eq!(safe[0].interest, 0);
+        assert!(schedule_v(SAFE, "2025-01-01", 1, "french", 1, "nominal", 2).is_err());
+        assert!(schedule_v(SAFE + 1, "2025-01-01", 1, "french", 0, "nominal", 2).is_err());
+        assert!(schedule_v(100, "2025-01-01", 1, "french", 0, "nominal", 3).is_err());
+    }
+
+    #[test]
+    fn limits_are_rejected() {
+        assert!(schedule(0, "2025-01-01", 1, "french", 0, "nominal").is_err());
+        assert!(schedule(SAFE + 1, "2025-01-01", 1, "french", 0, "nominal").is_err());
+        assert!(schedule(100, "2025-01-01", 0, "french", 0, "nominal").is_err());
+        assert!(schedule(100, "2025-01-01", 601, "french", 0, "nominal").is_err());
+        assert!(schedule(2, "2025-01-01", 3, "french", 0, "nominal").is_err());
+        assert!(schedule(100, "2025-01-01", 1, "bad", 0, "nominal").is_err());
+        assert!(schedule(100, "2025-01-01", 1, "french", 100001, "nominal").is_err());
+        assert!(schedule(100, "2025-01-01", 1, "french", 100, "bad").is_err());
+        assert!(schedule(100, "2026-02-30", 1, "french", 0, "nominal").is_err());
+    }
+
     #[test]
     fn exact_remainder_and_month_ends() {
         let dues = schedule(100, "2024-01-31", 3, "german", 0, "nominal").unwrap();
@@ -805,6 +1066,66 @@ mod tests {
         assert_eq!(view.loans[0].payments.len(), 1);
         assert!(portfolio(&db, "b").unwrap().loans.is_empty());
         assert!(mutate(&db, "b", &payment).is_err());
+    }
+
+    #[test]
+    fn new_loans_use_v2_and_portfolio_honours_the_stored_version() {
+        let db = Database::open_memory().unwrap();
+        db.0.lock()
+            .unwrap()
+            .execute("INSERT INTO users VALUES('a','a','-',0)", [])
+            .unwrap();
+        finance::save_account(
+            &db,
+            "a",
+            &finance::Account {
+                id: "bank".into(),
+                kind: "bank".into(),
+                name: "bank".into(),
+                initial_balance: 0,
+            },
+        )
+        .unwrap();
+        let loan = Command {
+            request_id: uuid::Uuid::new_v4().to_string(),
+            entry: Entry::Loan {
+                name: "Préstamo".into(),
+                account_id: "bank".into(),
+                principal: 7_000_000_000_000_003,
+                date: "2025-01-02".into(),
+                first_due: "2025-02-02".into(),
+                periods: 1,
+                method: "french".into(),
+                rate_bps: 7000,
+                rate_type: "nominal".into(),
+            },
+        };
+        mutate(&db, "a", &loan).unwrap();
+        let conn = db.0.lock().unwrap();
+        let version: u8 = conn
+            .query_row(
+                "SELECT schedule_version FROM credit_loans WHERE user_id='a'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        drop(conn);
+        assert_eq!(version, 2);
+        assert_eq!(
+            portfolio(&db, "a").unwrap().loans[0].installments[0].interest,
+            408_333_333_333_334
+        );
+        db.0.lock()
+            .unwrap()
+            .execute(
+                "UPDATE credit_loans SET schedule_version=1 WHERE user_id='a'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(
+            portfolio(&db, "a").unwrap().loans[0].installments[0].interest,
+            408_333_333_333_333
+        );
     }
 
     #[test]

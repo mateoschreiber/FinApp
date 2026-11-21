@@ -175,3 +175,66 @@ Ninguno confirmado. El comportamiento de saldos negativos, reintegros a otra cue
 ### Verificación F9.1B
 
 `cargo test --locked --test finance_invariants` (6/6), `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked` (59 Rust: 24 lib + 14 auth + 8 finance_api + 6 finance_invariants + 3 full_flow + 4 import_load), `npm test` (40 JS), reconstrucción de `Dockerfile.test` y suite completa en Docker: todo en verde. Sin cambios de producción, migraciones ni credenciales.
+
+## F9.2 — Correcciones al plan aprobado
+
+- 2A-03: se conserva la anualidad redondeada de **407.615 Gs.** y la tasa efectiva mensual `(1,12)^(1/12)−1 = 0,009488792934582935` (verificada por bisección de `(1+r)^12 = 1,12`).
+- 2A-11: **no** se atribuye la discrepancia a la conversión del principal. El principal 7.000.000.000.000.003 es exactamente representable en f64 (`< 2^53`). El error está en la tasa y en el producto.
+- 2B-02: con banco inicial 0, tras desembolsar 1.000 y pagar 221 el saldo absoluto es **779**; la variación debida al pago es **−221**.
+- 2B-03: pago ordinario 300 + 300 + 300 y extraordinario 100 liquidan exactamente un préstamo de 1.000.
+- 2C-02: la compra de 300 reduce el patrimonio en 300; su pago posterior **no lo restaura**, solo cancela la obligación.
+- 2D-02: con pagos de 200 y 100 exclusivamente de capital, el patrimonio permanece en 500.
+
+Escenarios 2B, 2C y 2D **no implementados** en esta entrega.
+
+## F9.2A — Amortización V1/V2 (CORREGIDA)
+
+`schedule()` es privada, así que las pruebas se añadieron como unitarias en `#[cfg(test)]` sin ampliar la API. Los esperados son literales calculados fuera del código, salvo el oráculo racional `i128` de 2A-11.
+
+### Causa raíz y decisión
+
+- El principal 7.000.000.000.000.003 es exacto en f64. El error estaba en `rate = (7000/10000)/12 = 0,05833333333333332732` frente al exacto `7/120 = 0,05833333333333333333`; el producto cae en `…333,4375` y redondea a `…333` en vez de `…334`.
+- Un barrido de 21 principales × 11 tasas encontró 12 errores de ±1 con la fórmula anterior.
+- **V1** conserva esa fórmula para préstamos preexistentes. **V2** calcula el interés nominal como `round_half_up(principal·rate_bps, 120000)` con `i128`, empate hacia arriba, y conversión comprobada a `i64`. La anualidad francesa y la tasa efectiva siguen en f64 en ambas versiones.
+- Alternativa descartada: cambiar solo `rate = bps/120000.0` corrige 2A-11 pero deja 11 de 12 casos del barrido. La columna con `DEFAULT 1` es más simple que una tabla aparte de versiones: no requiere JOIN ni FK nueva.
+
+### Resultados V1 y V2
+
+| ID | Esperado | V2 observado | V1 observado | Estado |
+|---|---|---|---|---|
+| 2A-01 francesa nominal 1.200.000 @12% 3 | 396.027/399.987/403.986 + 12.000/8.040/4.040 | idéntico | idéntico | OK |
+| 2A-02 alemana nominal | 400.000 ×3 + 12.000/8.000/4.000 | idéntico | idéntico | OK |
+| 2A-03 francesa efectiva (anualidad 407.615) | 396.228/399.988/403.784 + 11.387/7.627/3.831 | idéntico | idéntico | OK |
+| 2A-04 tasa cero | 34/33/33 | idéntico | idéntico | OK |
+| 2A-05 principal 100 | 33+1 / 33+1 / 34+0 | idéntico | idéntico | OK |
+| 2A-06 medio guaraní | 50 + 1 | idéntico | idéntico | OK |
+| 2A-07 una cuota | 1.000 + 10 | idéntico | idéntico | OK |
+| 2A-08 600 cuotas | 600 capitales de 1, 6→0 | idéntico | idéntico | OK |
+| 2A-09 bisiesto | 2024-02-29 / 2024-03-29 | idéntico | idéntico | OK |
+| 2A-10 mes/año | 04-30 y 2027-01-31 | idéntico | idéntico | OK |
+| **2A-11** | **408.333.333.333.334** | **408.333.333.333.334** | 408.333.333.333.333 | **OK (V2)** |
+| Límites y desbordamiento SAFE | rechazo | rechazo | rechazo | OK |
+
+Además: capital conservado, última cuota = remanente, alemana y efectiva sin regresiones en V2, medio guaraní y límites SAFE, y préstamos nuevos creados con `schedule_version=2` y leídos por `portfolio()` según su versión almacenada.
+
+### Migración 009
+
+`ALTER TABLE credit_loans ADD COLUMN schedule_version INTEGER NOT NULL DEFAULT 1 CHECK (schedule_version IN (1,2))`. No se reescribió 006. Prueba con esquema 001-008 y un préstamo antiguo: tras abrir con el código nuevo el préstamo sigue en V1 con todos sus importes, el pago histórico 200/20/1 permanece, `schema_versions=9`, una segunda apertura no reaplica nada, `integrity_check=ok` y `foreign_key_check=0`. Un préstamo nuevo se inserta explícitamente en V2; la versión 3 es rechazada.
+
+### Mutaciones (todas restauradas)
+
+| Mutación | Prueba que falló |
+|---|---|
+| V2 vuelve al interés f64 | A11 V2 (`…333` vs `…334`) |
+| `portfolio()` ignora la versión guardada | `new_loans_use_v2...` |
+| DEFAULT de la migración cambiado a 2 | `migration_009_preserves_legacy_loans...` |
+| V1 pasa a usar el interés i128 | A11 histórico (`…334` vs `…333`) |
+| Anteriores (redondeo, capital, última cuota, fechas, tasa) | A01/A03/A05/A06, A04, seis pruebas, A10, seis pruebas |
+
+### Verificación y riesgo
+
+- Pruebas focalizadas: 12 de amortización + 3 V2 + 1 préstamo V2/V1 + 2 de migración.
+- No queda ninguna prueba ignorada; la reproducción exacta de 2A-11 se ejecuta normalmente.
+- `cargo fmt --check`, `clippy -D warnings`, `cargo test --locked` (**78 Rust**: 41 lib, 14 auth, 2 credit_migration, 8 finance_api, 6 finance_invariants, 3 full_flow, 4 import_load), `npm test` (**40 JS**), build y suite Docker: todo en verde.
+- **Riesgo residual:** la anualidad francesa y la tasa efectiva siguen usando f64, por lo que no se afirma que toda la amortización sea matemáticamente exacta. V2 corrige solo el interés nominal.
+- Antes de cualquier despliegue: hacer `bash scripts/backup.sh <destino>`, verificar el checksum y ensayar la restauración con `scripts/restore-check.sh`; la migración 009 es aditiva y no modifica datos, pero altera el esquema.

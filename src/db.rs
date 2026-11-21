@@ -28,6 +28,7 @@ impl Database {
             include_str!("../migrations/006_credit.sql"),
             include_str!("../migrations/007_operation_history.sql"),
             include_str!("../migrations/008_reconciliation.sql"),
+            include_str!("../migrations/009_schedule_version.sql"),
         ];
         let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let current: i64 = tx.query_row(
