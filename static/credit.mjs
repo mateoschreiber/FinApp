@@ -76,8 +76,10 @@ export function cardStatement(account, month, operations, portfolio) {
   // one cycle that contains the cutoff, where the server's balance math starts.
   let opening = 0n;
   if (account.cutoff_date && account.cutoff_date > previous && account.cutoff_date <= closing) {
-    charges -= BigInt(account.initial_balance);
-    if (BigInt(account.initial_balance) < 0n) opening = -BigInt(account.initial_balance);
+    // Backend: a positive card balance is a debt, a negative one is a credit.
+    const balance = BigInt(account.initial_balance);
+    charges += balance;
+    if (balance > 0n) opening = balance;
   }
   return {closing, due, charges:safeNumber(charges), paid:safeNumber(paid), outstanding:safeNumber(charges-paid), opening:safeNumber(opening)};
 }

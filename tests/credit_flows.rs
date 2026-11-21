@@ -1158,6 +1158,103 @@ async fn c07_card_rejections_are_atomic_and_idempotent() {
 }
 
 #[tokio::test]
+async fn d01_backend_matches_the_shared_projection_fixture() {
+    let f = Fixture::new().await;
+    let fixture: Value = serde_json::from_str(include_str!("fixtures/f92d.json")).unwrap();
+    let data = &fixture["d01"]["loan"];
+    f.account(&f.admin.id, "bank", "bank", 0);
+    f.category(&f.admin.id, "interest");
+    let entry = json!({
+        "kind":"loan", "name":"Préstamo", "account_id":"bank",
+        "principal":data["principal"], "date":data["date"],
+        "first_due":data["first_due"], "periods":data["periods"],
+        "method":data["method"], "rate_bps":data["rate_bps"],
+        "rate_type":data["rate_type"]
+    });
+    let (status, loan_id) = f.send_new(&f.admin, entry).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let portfolio = f.portfolio(&f.admin).await;
+    assert_eq!(portfolio["loans"][0]["installments"], data["installments"]);
+    let version: u8 =
+        f.db.0
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT schedule_version FROM credit_loans WHERE user_id=?1 AND id=?2",
+                params![f.admin.id, loan_id],
+                |r| r.get(0),
+            )
+            .unwrap();
+    assert_eq!(version, 2);
+
+    let first = &data["first_payment"];
+    let payment = json!({
+        "kind":"repayment", "loan_id":loan_id, "account_id":"bank",
+        "date":first["date"], "principal":first["principal"],
+        "interest":first["interest"], "fee":first["fee"], "category_id":"interest"
+    });
+    let (status, _) = f.send_new(&f.admin, payment).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        f.portfolio(&f.admin).await["loans"][0]["outstanding"],
+        data["outstanding_after_first"]
+    );
+
+    let report = f.report_for(&f.admin, "2026-01").await;
+    for (key, expected) in data["report_2026_01"].as_object().unwrap() {
+        assert_eq!(&report[key], expected, "report field {key}");
+    }
+    f.integrity();
+}
+
+#[tokio::test]
+async fn d05_backend_card_signs_match_the_shared_fixture() {
+    let f = Fixture::new().await;
+    let fixture: Value = serde_json::from_str(include_str!("fixtures/f92d.json")).unwrap();
+    let cards = &fixture["d05"];
+    f.account(&f.admin.id, "bank", "bank", 0);
+    for (id, key) in [("debt", "debt"), ("credit", "credit"), ("zero", "zero")] {
+        f.account(
+            &f.admin.id,
+            id,
+            "card",
+            cards[key]["initial_balance"].as_i64().unwrap(),
+        );
+    }
+    f.details(
+        &f.admin.id,
+        "debt",
+        Some(20),
+        Some(10),
+        cards["debt"]["cutoff_date"].as_str(),
+    );
+    f.details(
+        &f.admin.id,
+        "credit",
+        Some(20),
+        Some(10),
+        cards["credit"]["cutoff_date"].as_str(),
+    );
+    f.details(
+        &f.admin.id,
+        "zero",
+        Some(20),
+        Some(10),
+        cards["zero"]["cutoff_date"].as_str(),
+    );
+    let report = f.report(&f.admin).await;
+    for (id, key) in [("debt", "debt"), ("credit", "credit")] {
+        assert_eq!(
+            report["balances"][id],
+            json!(cards[key]["backend_balance"].as_i64().unwrap().to_string()),
+            "{id} balance"
+        );
+    }
+    assert_eq!(report["net_worth"], json!("0"));
+    f.integrity();
+}
+
+#[tokio::test]
 async fn b07_v1_and_v2_loans_both_accept_payments_and_cancellations() {
     let f = Fixture::new().await;
     f.account(&f.admin.id, "bank1", "bank", 0);

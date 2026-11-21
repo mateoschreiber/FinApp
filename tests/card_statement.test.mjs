@@ -94,21 +94,57 @@ test('only allocations with the current payment version reduce the statement', (
   assert.equal(cardStatement(card(), '2026-11', operations, stale).outstanding, 100);
 });
 
-// Documented ambiguity: the backend treats a positive card balance as debt, while
-// cardStatement folds the initial balance with the opposite sign in the cutoff cycle.
-test('cutoff-cycle opening balance keeps the current sign convention', () => {
-  const debtLike = card({ initial_balance: -500, cutoff_date: '2026-10-05' });
+test('first installment after closing belongs to the next statement', () => {
+  const account = card({ closing_day: 20, due_day: 5 });
+  const portfolio = {
+    purchases: [{ operation_id: 'buy', installments: [{ date: '2026-11-25', principal: 100 }] }],
+    allocations: [],
+  };
+  const operations = [op('buy', 'expense', 100, '2026-11-02')];
+  assert.equal(cardStatement(account, '2026-11', operations, portfolio).charges, 0);
+  assert.equal(cardStatement(account, '2026-12', operations, portfolio).charges, 100);
+});
+
+test('two financed purchases in one cycle and a year change', () => {
+  const account = card({ closing_day: 20, due_day: 5 });
+  const portfolio = {
+    purchases: [
+      { operation_id: 'a', installments: [{ date: '2026-11-10', principal: 100 }] },
+      { operation_id: 'b', installments: [{ date: '2026-11-15', principal: 100 }] },
+      { operation_id: 'c', installments: [{ date: '2026-12-25', principal: 100 }] },
+    ],
+    allocations: [],
+  };
+  const operations = [
+    op('a', 'expense', 100, '2026-11-01'),
+    op('b', 'expense', 100, '2026-11-02'),
+    op('c', 'expense', 100, '2026-12-02'),
+  ];
+  assert.equal(cardStatement(account, '2026-11', operations, portfolio).charges, 200);
+  assert.equal(cardStatement(account, '2027-01', operations, portfolio).charges, 100);
+});
+
+// Backend convention: positive card balance = debt, negative = credit. The statement
+// must use that same sign in the cutoff cycle so debt is shown as payable.
+test('cutoff-cycle opening balance follows the backend sign', () => {
+  const debt = card({ initial_balance: 300, cutoff_date: '2026-10-05' });
   assert.deepEqual(
-    [cardStatement(debtLike, '2026-10', [], empty).charges,
-      cardStatement(debtLike, '2026-10', [], empty).opening],
-    [500, 500],
+    [cardStatement(debt, '2026-10', [], empty).charges,
+      cardStatement(debt, '2026-10', [], empty).opening,
+      cardStatement(debt, '2026-10', [], empty).outstanding],
+    [300, 300, 300],
   );
-  const positive = card({ initial_balance: 500, cutoff_date: '2026-10-05' });
+  const credit = card({ initial_balance: -300, cutoff_date: '2026-10-05' });
   assert.deepEqual(
-    [cardStatement(positive, '2026-10', [], empty).charges,
-      cardStatement(positive, '2026-10', [], empty).opening],
-    [-500, 0],
+    [cardStatement(credit, '2026-10', [], empty).charges,
+      cardStatement(credit, '2026-10', [], empty).opening,
+      cardStatement(credit, '2026-10', [], empty).outstanding],
+    [-300, 0, -300],
   );
+  const boundary = card({ initial_balance: 300, cutoff_date: '2026-10-20' });
+  assert.equal(cardStatement(boundary, '2026-10', [], empty).opening, 300);
+  const outside = card({ initial_balance: 300, cutoff_date: '2026-10-21' });
+  assert.equal(cardStatement(outside, '2026-10', [], empty).opening, 0);
   const withoutCutoff = card({ initial_balance: -500 });
   assert.equal(cardStatement(withoutCutoff, '2026-10', [], empty).opening, 0);
 });

@@ -316,3 +316,43 @@ El backend trata `initial_balance > 0` en tarjeta como deuda y `< 0` como crédi
 No se detectaron defectos nuevos en backend. Riesgo pendiente para F9.2D: `creditProjection` mezcla deuda de tarjeta, cuotas de préstamos y proyecciones; aún no se compara contra la cartera del servidor. Riesgo histórico: la ambigüedad de signo del saldo inicial de tarjetas importadas.
 
 Validación: `cargo test --locked --test credit_flows` (14/14), `node --test tests/card_statement.test.mjs` (6/6), `cargo fmt --check`, `clippy -D warnings`, `cargo test --locked` (**92 Rust**: 41 lib, 14 auth, 14 credit_flows, 2 credit_migration, 8 finance_api, 6 finance_invariants, 3 full_flow, 4 import_load), `npm test` (**46 JS**), build y suite Docker: todo en verde. Cero pruebas ignoradas. README sin cambios: no hay regla funcional nueva para el usuario.
+
+## F9.2D — Cartera, proyecciones y frontend
+
+Fixture compartido `tests/fixtures/f92d.json` (versión 1): Rust lo consume con `include_str!` para verificar SQLite/API y JavaScript con `readFileSync` para verificar `creditProjection()` y `cardStatement()`. Los esperados son literales e independientes; se usan `BigInt` para cálculos intermedios y se comprueba `Number.MAX_SAFE_INTEGER`.
+
+| ID | Regla | Esperado = observado | Fuente | Estado |
+|---|---|---|---|---|
+| D01 | Préstamo V2 1.200.000 @12% nominal, 3 cuotas, primer pago | cuotas 396.027+12.000 / 399.987+8.040 / 403.986+4.040; deuda 803.973; informe ene net −12.000, cash_flow 791.973, patrimonio −12.000; proyecciones 0 / 408.027 / 408.026 | fixture + SQL directo | OK |
+| D02 | 300+300+300+100 sobre préstamo de 1.000 | deuda 0, total amortizado 1.000, tabla original [334,333,333], proyección 0; con 900 pagados, proyección 100 | fixture + FIFO independiente | OK |
+| D03 | Pagos anticipados, parciales y tardíos | la proyección usa pagos con `date <= fin_del_mes` y FIFO; ene 0, feb 408.027, mar 408.026 aunque el pago de la 2ª cuota sea 5-mar | fechas literales | OK |
+| D04 | V1 vs V2 con principal 7.000.000.000.000.003 | interés V1 …333 y V2 …334; `creditProjection` usa la tabla devuelta sin recalcular; ambas cifras < MAX_SAFE_INTEGER | fixture + backend | OK |
+| D05 | Tarjetas importadas | backend: +300 deuda / −300 crédito; extracto y proyección usan el mismo signo tras la corrección; cutoff en el límite inclusive; sin cutoff no muestra apertura | fixture + SQL + `cardStatement` | **DEFECTO CORREGIDO** |
+| D06 | Compra financiada 300 en 3×100 | gasto 300 una vez, cuotas 100 por ciclo, ningún gasto ficticio; primera cuota posterior al cierre pasa al ciclo siguiente; dos compras suman 200; cruce de año | `cardStatement` + F9.2C | OK |
+| D07 | Pago 100 asignado 70 ene + 30 feb | deuda total baja 100; sin asignación al mes, el extracto sigue mostrando pendiente 100; con asignación vigente, 0 | `cardStatement` + `creditProjection` | OK |
+| D08 | Operaciones pendientes/conflicto/eliminadas | no se contabilizan como pagos confirmados; la proyección filtra `pending`/`conflict` y el extracto ignora `deleted` | `view-model` + `credit.mjs` | OK |
+
+### Defecto D05 — corrección mínima
+
+`cardStatement()` (`static/credit.mjs:78-82`) invertía `initial_balance` en el ciclo del `cutoff_date`: con `+300` (deuda en el backend) mostraba `−300` de cargos y `outstanding −300`, y con `−300` (crédito) mostraba deuda 300. **Confirmado y corregido**: ahora `charges += initial_balance` y `opening = initial_balance` solo si es positivo. No se tocaron saldos, migraciones, `finance_postings` ni los algoritmos V1/V2. Contrato de retorno sin cambios. Riesgo documentado: los extractos históricos mostrados antes de la corrección pueden cambiar al recalcularse; no se altera ningún dato persistido.
+
+### Matriz de conceptos (no equivalentes)
+
+Deuda total = saldo de tarjeta; saldo bancario = efectivo; cuotas contractuales = tabla V1/V2; cuotas pagadas = `credit_repayments`; vencido = obligación de meses anteriores; importe del extracto = cargos del ciclo menos asignaciones vigentes; proyección = obligaciones del mes seleccionado al cierre de ese mes; resultado mensual y patrimonio = informe del servidor. El fixture mantiene estos conceptos separados.
+
+### Mutaciones (restauradas, diff limpio)
+
+| Mutación | Prueba que falló |
+|---|---|
+| No tratar préstamos liquidados (`paidCapital=0` si `settled`) | D02 |
+| Ignorar pagos parciales (`paidCapital=0n`) | D01, D02, D03 |
+| Invertir el signo del saldo inicial de tarjeta | D05 + 3 pruebas de extracto |
+| Desplazar una cuota a otro período (quitar filtro de mes) | D01 |
+
+### Verificación
+
+`cargo test --locked --test credit_flows` (16/16), `npm test` (55 JS: 46 previas + 7 de `creditProjection` + 2 nuevas de extracto), `cargo fmt --check`, `clippy -D warnings`, `cargo test --locked` (**94 Rust**: 41 lib, 14 auth, 16 credit_flows, 2 credit_migration, 8 finance_api, 6 finance_invariants, 3 full_flow, 4 import_load), build y suite Docker: todo en verde. Cero pruebas ignoradas. `PRAGMA integrity_check` y `foreign_key_check` en los escenarios Rust.
+
+**Sin verificación en navegador**: no se usó Chrome DevTools; la correspondencia backend/frontend se comprobó con el fixture compartido y pruebas deterministas. Queda sin comprobar el render real de la tabla de proyección en `planning.mjs`.
+
+Riesgos para F9.3: la proyección no modela intereses futuros sobre saldos pendientes (usa la tabla contractual original) y `creditProjection` ignora la deuda de tarjetas sin `cutoff_date`; ambos son comportamientos actuales documentados.

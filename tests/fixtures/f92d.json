@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "d01": {
+    "loan": {
+      "principal": 1200000,
+      "rate_bps": 1200,
+      "rate_type": "nominal",
+      "method": "french",
+      "periods": 3,
+      "date": "2026-01-01",
+      "first_due": "2026-01-31",
+      "installments": [
+        { "date": "2026-01-31", "principal": 396027, "interest": 12000 },
+        { "date": "2026-02-28", "principal": 399987, "interest": 8040 },
+        { "date": "2026-03-31", "principal": 403986, "interest": 4040 }
+      ],
+      "first_payment": { "date": "2026-01-31", "principal": 396027, "interest": 12000, "fee": 0 },
+      "outstanding_after_first": 803973,
+      "report_2026_01": {
+        "income": "0", "expense": "12000", "net": "-12000",
+        "cash_flow": "791973", "net_worth": "-12000",
+        "loan_principal": "396027", "loan_interest": "12000"
+      }
+    },
+    "projection": {
+      "2026-01": { "items": [], "total": 0 },
+      "2026-02": {
+        "items": [{ "source": "loan", "id": "loan-1", "name": "Préstamo", "date": "2026-02-28", "principal": 399987, "interest": 8040, "amount": 408027 }],
+        "total": 408027
+      },
+      "2026-03": {
+        "items": [{ "source": "loan", "id": "loan-1", "name": "Préstamo", "date": "2026-03-31", "principal": 403986, "interest": 4040, "amount": 408026 }],
+        "total": 408026
+      }
+    }
+  },
+  "d02": {
+    "principal": 1000,
+    "installments": [
+      { "date": "2026-01-10", "principal": 334 },
+      { "date": "2026-02-10", "principal": 333 },
+      { "date": "2026-03-10", "principal": 333 }
+    ],
+    "settled_payments": [
+      { "date": "2026-01-20", "principal": 300 },
+      { "date": "2026-02-20", "principal": 300 },
+      { "date": "2026-03-20", "principal": 300 },
+      { "date": "2026-03-25", "principal": 100 }
+    ],
+    "partial_payments": [
+      { "date": "2026-01-20", "principal": 300 },
+      { "date": "2026-02-20", "principal": 300 },
+      { "date": "2026-03-20", "principal": 300 }
+    ],
+    "settled_total": 0,
+    "partial_total": 100,
+    "partial_outstanding": 100
+  },
+  "d04": {
+    "principal": 7000000000000003,
+    "rate_bps": 7000,
+    "periods": 1,
+    "first_due": "2025-01-01",
+    "v1_interest": 408333333333333,
+    "v2_interest": 408333333333334
+  },
+  "d05": {
+    "month": "2026-12",
+    "debt": {
+      "initial_balance": 300,
+      "cutoff_date": "2026-11-05",
+      "backend_balance": 300,
+      "backend_net_worth_contribution": -300,
+      "statement_charges": 300,
+      "statement_opening": 300,
+      "statement_outstanding": 300,
+      "projection_total": 300,
+      "projection_due": "2026-12-10"
+    },
+    "credit": {
+      "initial_balance": -300,
+      "cutoff_date": "2026-11-05",
+      "backend_balance": -300,
+      "backend_net_worth_contribution": 300,
+      "statement_charges": -300,
+      "statement_opening": 0,
+      "statement_outstanding": -300,
+      "projection_total": 0
+    },
+    "zero": { "initial_balance": 0, "cutoff_date": "2026-11-05", "projection_total": 0 },
+    "no_cutoff": { "initial_balance": 300, "projection_total": 0 },
+    "boundary_cutoff": { "initial_balance": 300, "cutoff_date": "2026-11-20", "statement_opening": 300 }
+  }
+}
