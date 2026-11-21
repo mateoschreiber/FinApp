@@ -5,7 +5,7 @@ import {renderReconciliation} from './reconciliation.mjs';
 import {openUserStore} from './offline-store.mjs';
 import {syncUser} from './sync.mjs';
 import {calculateBalances, overlayOperations, checkEditBase, setupStep, historyPage, monthlyTotals, netWorth} from './view-model.mjs';
-import {element, lastIdentity, money, sessionKey} from './ui.mjs';
+import {element, icon, lastIdentity, money, sessionKey} from './ui.mjs';
 
 const $ = id => document.getElementById(id);
 const fields = id => $(id).elements;
@@ -163,17 +163,19 @@ function renderKpis(totals) {
   const result = monthlyTotals(view.operations, month);
   const monthLabel = new Intl.DateTimeFormat('es-PY', {month:'long', year:'numeric', timeZone:'America/Asuncion'})
     .format(new Date(month + '-15T12:00:00Z'));
-  const kpi = (label, value, className, detail) => {
+  const kpi = (label, value, className, detail, iconName) => {
     const card = element('div', null, 'kpi');
-    card.append(element('p', label, 'label'), element('p', money(value), 'value ' + className));
+    const head = element('p', label, 'label');
+    if (iconName) head.prepend(icon(iconName));
+    card.append(head, element('p', money(value), 'value ' + className));
     if (detail) card.append(element('p', detail, 'detail'));
     kpis.append(card);
   };
-  kpi('Patrimonio neto', net, net >= 0 ? 'positive' : 'negative');
-  kpi('Disponible', available, available >= 0 ? 'positive' : 'negative');
-  kpi('Deuda de tarjetas', debt, debt > 0 ? 'negative' : '');
+  kpi('Patrimonio neto', net, net >= 0 ? 'positive' : 'negative', null, 'trend');
+  kpi('Disponible', available, available >= 0 ? 'positive' : 'negative', null, 'cash');
+  kpi('Deuda de tarjetas', debt, debt > 0 ? 'negative' : '', null, 'card');
   kpi('Resultado de ' + monthLabel, Number(result.net), result.net >= 0 ? 'positive' : 'negative',
-    'Ingresos ' + money(Number(result.income)) + ' · Gastos ' + money(Number(result.expense)));
+    'Ingresos ' + money(Number(result.income)) + ' · Gastos ' + money(Number(result.expense)), 'bars');
 }
 
 function renderBalances() {

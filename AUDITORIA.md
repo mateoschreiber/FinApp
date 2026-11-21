@@ -633,3 +633,28 @@ El README documenta el flujo `gpg --symmetric` para la copia externa (cifrado, v
 ### Pendiente tras F12
 
 F10.2 (validación en producción: despliegue con `FINAPP_VERSION`, XLSX real, Android físico, copia programada verificada, ensayo de descifrado de la copia cifrada) y P3.4 (revisión de accesos Docker y rotación de credenciales de bootstrap) son operativos. P3.2 sigue condicionada a la base por encima de ~100 MB.
+
+## F13 — Pulido visual premium
+
+### Alcance (elegido por el usuario)
+
+Solo visual: iconos SVG propios, micro-movimiento con significado y jerarquía refinada. **No incluido** (decisión del usuario): errores junto al campo, instalación in-app e interruptor de tema.
+
+### Cambios
+
+- Seis iconos SVG inline en las pestañas (`static/index.html`) y cuatro KPIs (`icon()` en `static/ui.mjs`, llamado desde `renderKpis`): trazo `currentColor`, 1,1 em, `aria-hidden`, texto como etiqueta accesible. Sin dependencias.
+- `.kpi .label` en mayúsculas con `letter-spacing: 0.05em`; pestañas con icono+texto alineados.
+- Movimiento solo con significado: entrada de vista (160 ms, `view-in`) al cambiar de pestaña y tres pulsos de atención en filas `.conflict`; todo dentro de `@media (prefers-reduced-motion: no-preference)`.
+- Corrección encontrada en navegador real: a 360 px los seis botones envolvían en 5 filas desalineadas (45/69 px); cuadrícula de 2 columnas con `align-items: stretch` → 3 filas de 162 px de ancho y altura pareja por fila, `scrollWidth = 360 = viewport`.
+
+### Evidencia en navegador real (Chrome DevTools, servidor local)
+
+- Escritorio: 6 pestañas con 6 SVG (`aria-hidden=true`), 4 KPIs con 4 SVG, etiquetas correctas e importes exactos («Patrimonio neto 1.000.000 Gs.» tras crear una cuenta de prueba).
+- Modo claro: trazo del icono `rgb(83, 107, 98)` = `--ink-2`; modo oscuro: `rgb(163, 181, 172)`. Sin errores de consola (solo avisos de `autocomplete` en campos no sensibles).
+- `prefers-reduced-motion: reduce` emulado → `animationName: none`; sin emulación → `view-in` 0,16 s.
+- Móvil 360 px: 3 filas de pestañas, sin scroll horizontal.
+- `viewport-fit=cover` activo en el meta viewport.
+
+### Validación
+
+`npm test` 64/64 exit 0 tras todos los cambios. Sin cambios en Rust. LIMITACIÓN: el modelo no puede inspeccionar píxeles de una captura; la verificación se hizo sobre DOM, estilos computados y geometría del navegador real. El aspecto estético final depende del ojo del usuario en su dispositivo.

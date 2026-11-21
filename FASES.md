@@ -71,6 +71,10 @@ Criterio de orden fijado por el usuario: primero **funcionalidad**, luego **UX/U
 | P2.4 ✅ (cerrado) | Rendimiento percibido del historial: virtualizar la lista para >10.000 movimientos en móvil. | 0 h | Premisa inválida: `historyPage()` ya pagina a 25 filas; el listado nunca renderiza más. Nada que hacer. |
 | P2.5 ✅ | (Opcional) Informe mensual con un gráfico de barras por categoría, sin dependencias. | 1 h | Barras HTML en `planning.mjs` (proporción sobre el máximo, importe siempre en texto, nunca solo color), estilos en `style.css`; reemplaza la tabla duplicada de categorías. |
 
+### F13 — Pulido visual premium (ampliación de P2, ejecutada)
+
+Iconos SVG propios e inline (6 pestañas en `index.html`, 4 KPIs vía `icon()` en `ui.mjs`), todos `aria-hidden` y con la etiqueta de texto intacta; jerarquía refinada en `.kpi .label` (mayúsculas, tracking 0.05em) y botones de pestaña con icono+texto; micro-movimiento con significado (entrada de vista 160 ms y tres pulsos de atención en filas `.conflict`), siempre dentro de `@media (prefers-reduced-motion: no-preference)`. Corrección visual detectada en navegador: a 360 px las pestañas envolvían en 5 filas desalineadas → cuadrícula de 2 columnas con `align-items: stretch` → 3 filas parejas, sin scroll horizontal.
+
 Reglas de oro de la fase (de la skill): nunca quitar el anillo de foco; objetivos táctiles ≥ 44×44 px; nunca confiar solo en el color; iconos SVG, no emoji; validar formularios junto al campo.
 
 ### P3 — Seguridad (5,5–10 h, parcialmente condicional) — al final por decisión del usuario

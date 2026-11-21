@@ -43,3 +43,18 @@ export function chunkedText(bytes, encode) {
   for (let start = 0; start < bytes.length; start += 8192) parts.push(encode(bytes.subarray(start, start + 8192)));
   return parts.join('');
 }
+
+// Decorative inline icons: the accessible label is always the text next to them.
+const ICONS = {
+  trend: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
+  cash: '<rect x="3" y="7" width="18" height="10" rx="2"/><circle cx="12" cy="12" r="2"/>',
+  card: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/>',
+  bars: '<path d="M5 20v-6M11 20V8M17 20v-10M3 20h18"/>',
+};
+export function icon(name) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('viewBox', '0 0 24 24');
+  svg.innerHTML = ICONS[name];
+  return svg;
+}
