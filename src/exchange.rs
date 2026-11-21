@@ -1,6 +1,7 @@
 //! Import previews and confirmations validate the same rows and run against a transaction.
 use crate::{
     AppState, catalog,
+    db::log_sqlite,
     finance::{self, Account, Category, Change, Outcome},
     planning,
 };
@@ -251,6 +252,14 @@ struct Import<'a> {
     mapping: BTreeMap<String, String>,
     expected: BTreeMap<String, i64>,
     report: Preview,
+    sheet: &'static str,
+    line: u32,
+}
+
+impl Import<'_> {
+    fn place(&self) -> String {
+        format!("{} fila {}", self.sheet, self.line)
+    }
 }
 
 impl Import<'_> {
@@ -470,7 +479,11 @@ impl Import<'_> {
         let fingerprint = fingerprint(row);
         let prior=conn.query_row("SELECT target_id,fingerprint FROM import_sources WHERE user_id=? AND entity=? AND source_id=?",
             params![self.user,entity,id], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))
-            .optional().map_err(|_|"No se pudo consultar el historial de importación.")?;
+            .optional()
+            .map_err(|e| {
+                log_sqlite("source_lookup", &self.place(), &e);
+                "No se pudo consultar el historial de importación."
+            })?;
         if let Some((target, hash)) = prior {
             if fingerprint != hash {
                 return Err("El ID importado previamente tiene datos diferentes.".into());
@@ -496,7 +509,10 @@ impl Import<'_> {
                 params![self.user, target],
                 |r| r.get(0),
             )
-            .map_err(|_| "No se pudo comprobar el ID.")?;
+            .map_err(|e| {
+                log_sqlite("source_exists", &self.place(), &e);
+                "No se pudo comprobar el ID."
+            })?;
         if exists && !mapped {
             return Err(
                 "El ID ya existe en FinApp. Si es una cuenta, selecciona su vínculo.".into(),
@@ -553,7 +569,10 @@ impl Import<'_> {
             "INSERT INTO import_sources VALUES(?,?,?,?,?)",
             params![self.user, entity, id, target, fingerprint],
         )
-        .map_err(|_| "No se pudo guardar el origen de la fila.")?;
+        .map_err(|e| {
+            log_sqlite("source_save", &self.place(), &e);
+            "No se pudo guardar el origen de la fila."
+        })?;
         if skipped {
             self.report.skipped += 1;
         } else {
@@ -575,6 +594,8 @@ fn run(
         mapping: input.mapping.clone(),
         expected: BTreeMap::new(),
         report: Preview::default(),
+        sheet: "",
+        line: 0,
     };
     let mut seen = BTreeSet::new();
     for (name, rows) in sheets {
@@ -588,16 +609,21 @@ fn run(
             ordered.sort_by_key(|(_, r)| kind(&key(value(r, "tipo"))) == "refund");
         }
         for (line, row) in ordered {
+            import.sheet = *name;
+            import.line = *line;
             let id = value(row, id_column);
             let normalized = key(value(row, "tipo"));
             let ty = kind(&normalized);
             let result = if id.is_empty() || id.len() > 128 || !seen.insert((entity, id)) {
                 Err("ID de origen vacío, demasiado largo o repetido.".into())
             } else {
-                let save = conn.savepoint()?;
+                let save = conn
+                    .savepoint()
+                    .inspect_err(|e| log_sqlite("savepoint", &import.place(), e))?;
                 let result = import.row(&save, entity, row, id, ty);
                 if result.is_ok() {
-                    save.commit()?;
+                    save.commit()
+                        .inspect_err(|e| log_sqlite("savepoint_commit", &import.place(), e))?;
                 }
                 result
             };
@@ -617,7 +643,10 @@ fn run(
             }
         }
     }
-    for (id, balance) in finance::balances_in(conn, user, None)? {
+    import.sheet = "balances";
+    let balances = finance::balances_in(conn, user, None)
+        .inspect_err(|e| log_sqlite("balances", "balance final", e))?;
+    for (id, balance) in balances {
         if balance.abs() > i128::from(finance::SAFE) {
             import.report.errors.push(format!(
                 "El saldo calculado de {id} excede el rango admitido."
@@ -637,7 +666,12 @@ fn run(
     Ok(import.report)
 }
 
-fn db_error(_: rusqlite::Error) -> Problem {
+fn db_error(error: rusqlite::Error) -> Problem {
+    db_error_at("db", "import/export", error)
+}
+
+fn db_error_at(stage: &str, place: &str, error: rusqlite::Error) -> Problem {
+    log_sqlite(stage, place, &error);
     (
         StatusCode::INTERNAL_SERVER_ERROR,
         "No se pudo consultar la base de datos.".into(),
@@ -655,14 +689,17 @@ async fn import(
         .decode(&input.file)
         .map_err(|_| invalid("Archivo inválido.".into()))?;
     tokio::task::spawn_blocking(move || {
+        let started = std::time::Instant::now();
         let sheets = book(&file).map_err(invalid)?;
-        let mut conn = state
-            .db
-            .0
-            .lock()
-            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, String::new()))?;
-        let mut tx = conn.transaction().map_err(db_error)?;
-        let mut report = run(&mut tx, &user.id, &sheets, &input).map_err(db_error)?;
+        let mut conn = state.db.0.lock().map_err(|_| {
+            eprintln!("finapp mutex stage=import_lock place=importación error=poisoned");
+            (StatusCode::INTERNAL_SERVER_ERROR, String::new())
+        })?;
+        let mut tx = conn
+            .transaction()
+            .map_err(|e| db_error_at("import_begin", "importación", e))?;
+        let mut report = run(&mut tx, &user.id, &sheets, &input)
+            .map_err(|e| db_error_at("import_run", "importación", e))?;
         let mut hash = Sha256::new();
         hash.update(Sha256::digest(&file));
         hash.update(
@@ -672,7 +709,10 @@ async fn import(
                 input.include_before_cutoff,
                 &report,
             ))
-            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, String::new()))?,
+            .map_err(|_| {
+                eprintln!("finapp stage=hash place=importación error=serialization");
+                (StatusCode::INTERNAL_SERVER_ERROR, String::new())
+            })?,
         );
         let token = hex::encode(hash.finalize());
         if let Some(reviewed) = &input.preview_token {
@@ -682,9 +722,18 @@ async fn import(
                     "La vista previa cambió. Vuelve a revisarla antes de importar.".into(),
                 ));
             }
-            tx.commit().map_err(db_error)?;
+            tx.commit()
+                .map_err(|e| db_error_at("import_commit", "confirmación", e))?;
             report.committed = true;
         }
+        eprintln!(
+            "finapp import stage=summary added={} duplicates={} skipped={} errors={} elapsed_ms={}",
+            report.added,
+            report.duplicates,
+            report.skipped,
+            report.errors.len(),
+            started.elapsed().as_millis()
+        );
         report.token = token;
         Ok(Json(report))
     })

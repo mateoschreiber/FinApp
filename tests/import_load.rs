@@ -1,10 +1,12 @@
 use axum::{
+    Router,
     body::Body,
     http::{Request, StatusCode, header},
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
 use finapp::{app, db::Database};
 use http_body_util::BodyExt;
+use rusqlite::Connection;
 use serde_json::{Value, json};
 use std::{
     io::Write,
@@ -235,4 +237,182 @@ async fn importing_25k_rows_measures_the_shared_connection_lock() {
         worst_health < Duration::from_secs(30),
         "/health stalled {worst_health:?} during the import"
     );
+}
+
+async fn login_user(router: &Router) -> (String, String) {
+    let login = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/login")
+                .header("origin", ORIGIN)
+                .header("content-type", "application/json")
+                .body(Body::from(
+                    json!({"username":"alice","password":PASSWORD}).to_string(),
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(login.status(), StatusCode::OK);
+    let cookie = login.headers()[header::SET_COOKIE]
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let user: Value =
+        serde_json::from_slice(&login.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    (cookie, user["id"].as_str().unwrap().to_owned())
+}
+
+async fn report_of(router: &Router, body: &Value, cookie: &str, user: &str) -> (StatusCode, Value) {
+    let response = router
+        .clone()
+        .oneshot(post_import(body, cookie, user))
+        .await
+        .unwrap();
+    let status = response.status();
+    let report =
+        serde_json::from_slice(&response.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    (status, report)
+}
+
+fn temp_path(name: &str) -> std::path::PathBuf {
+    std::env::temp_dir().join(format!("finapp-f84-{name}-{}.sqlite", std::process::id()))
+}
+
+/// A second connection takes a write lock before the import writes. The 5 s busy
+/// timeout expires and the import reports a row error instead of hanging or failing
+/// silently. The public message must stay the same.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn controlled_write_lock_reports_a_row_error() {
+    let path = temp_path("lock");
+    let _ = std::fs::remove_file(&path);
+    let db = Database::open(&path).unwrap();
+    db.bootstrap_admin("alice", PASSWORD).unwrap();
+    let router = app(db, ORIGIN.into());
+    let (cookie, user) = login_user(&router).await;
+
+    let body = json!({"file": workbook(2)});
+    let (status, preview) = report_of(&router, &body, &cookie, &user).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(preview["errors"], json!([]), "preview: {preview}");
+
+    let blocker = Connection::open(&path).unwrap();
+    blocker.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let started = Instant::now();
+    let mut confirm = body.clone();
+    confirm["preview_token"] = preview["token"].clone();
+    let response = router
+        .clone()
+        .oneshot(post_import(&confirm, &cookie, &user))
+        .await
+        .unwrap();
+    let status = response.status();
+    let public_message =
+        String::from_utf8_lossy(&response.into_body().collect().await.unwrap().to_bytes())
+            .to_string();
+    let elapsed = started.elapsed();
+    blocker.execute_batch("ROLLBACK").unwrap();
+    drop(blocker);
+
+    // A row error makes the confirmation reject the stale preview with the same
+    // public message as before. The SQLite code is in stderr, not in the response.
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert!(
+        public_message.contains("La vista previa cambió"),
+        "{public_message}"
+    );
+    eprintln!("controlled lock: {elapsed:?} · public message: {public_message}");
+    // SQLite returns BUSY immediately when a DEFERRED transaction must promote a
+    // read lock to a write lock while another connection holds RESERVED. The 5 s
+    // busy timeout is not invoked in that case, so no minimum wait is asserted.
+
+    let check: String = Connection::open(&path)
+        .unwrap()
+        .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(check, "ok");
+    let _ = std::fs::remove_file(&path);
+}
+
+/// Removing the source table under a second connection produces a deterministic
+/// SQLite failure. The public message stays compatible and the row is not committed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sqlite_failure_surface_is_public_and_transaction_stays_clean() {
+    let path = temp_path("schema");
+    let _ = std::fs::remove_file(&path);
+    let db = Database::open(&path).unwrap();
+    db.bootstrap_admin("alice", PASSWORD).unwrap();
+    let router = app(db.clone(), ORIGIN.into());
+    let (cookie, user) = login_user(&router).await;
+    Connection::open(&path)
+        .unwrap()
+        .execute_batch("DROP TABLE import_sources")
+        .unwrap();
+
+    let body = json!({"file": workbook(2)});
+    let (status, report) = report_of(&router, &body, &cookie, &user).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(report["errors"].as_array().is_some_and(|e| !e.is_empty()));
+    assert!(
+        report["errors"][0]
+            .as_str()
+            .unwrap()
+            .contains("No se pudo consultar el historial de importación.")
+    );
+    assert_eq!(report["committed"], json!(false));
+    let conn = db.0.lock().unwrap();
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM finance_operations WHERE user_id=?1",
+            [&user],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 0, "a failed row must leave no operation behind");
+    drop(conn);
+    let _ = std::fs::remove_file(&path);
+}
+
+/// The same workbook confirmed twice must not duplicate movements.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reimporting_the_same_workbook_is_idempotent() {
+    let db = Database::open_memory().unwrap();
+    db.bootstrap_admin("alice", PASSWORD).unwrap();
+    let router = app(db.clone(), ORIGIN.into());
+    let (cookie, user) = login_user(&router).await;
+    let body = json!({"file": workbook(2)});
+
+    let (status, first) = report_of(&router, &body, &cookie, &user).await;
+    assert_eq!(status, StatusCode::OK);
+    let mut done = body.clone();
+    done["preview_token"] = first["token"].clone();
+    let (status, first_done) = report_of(&router, &done, &cookie, &user).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first_done["committed"], json!(true));
+
+    let (status, second) = report_of(&router, &body, &cookie, &user).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(second["duplicates"], json!(4), "second pass: {second}");
+    assert_eq!(second["added"], json!(0), "second pass: {second}");
+    assert_eq!(second["errors"], json!([]), "second pass: {second}");
+    let mut done_again = body.clone();
+    done_again["preview_token"] = second["token"].clone();
+    let (status, second_done) = report_of(&router, &done_again, &cookie, &user).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(second_done["committed"], json!(true));
+
+    let conn = db.0.lock().unwrap();
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM finance_operations WHERE user_id=?1",
+            [&user],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 2, "no duplicated movements after a reimport");
 }

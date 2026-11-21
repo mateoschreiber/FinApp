@@ -84,7 +84,8 @@ pub enum Error {
     Database,
 }
 impl From<rusqlite::Error> for Error {
-    fn from(_: rusqlite::Error) -> Self {
+    fn from(error: rusqlite::Error) -> Self {
+        crate::db::log_sqlite("finance_write", "finanzas", &error);
         Self::Database
     }
 }
