@@ -128,17 +128,54 @@ impl Fixture {
     }
 
     async fn report(&self, session: &Session) -> Value {
+        self.report_for(session, MONTH).await
+    }
+
+    async fn report_for(&self, session: &Session, month: &str) -> Value {
         let res = self
             .request(
                 session,
                 "GET",
-                &format!("/api/planning/month/{MONTH}"),
+                &format!("/api/planning/month/{month}"),
                 json!({}),
             )
             .await;
         assert_eq!(res.status(), StatusCode::OK);
         let body = res.into_body().collect().await.unwrap().to_bytes();
         serde_json::from_slice(&body).unwrap()
+    }
+
+    async fn operation(&self, session: &Session, change: Value) -> StatusCode {
+        let res = self
+            .request(session, "POST", "/api/operations", change)
+            .await;
+        res.status()
+    }
+
+    fn details(
+        &self,
+        user: &str,
+        account: &str,
+        closing_day: Option<u8>,
+        due_day: Option<u8>,
+        cutoff: Option<&str>,
+    ) {
+        self.db
+            .0
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO catalog_details(user_id,entity,id,archived,institution,notes,cutoff_date,closing_day,due_day)
+                 VALUES(?1,'account',?2,0,'','',?3,?4,?5)
+                 ON CONFLICT(user_id,entity,id) DO UPDATE SET cutoff_date=excluded.cutoff_date,
+                 closing_day=excluded.closing_day, due_day=excluded.due_day",
+                params![user, account, cutoff, closing_day, due_day],
+            )
+            .unwrap();
+    }
+
+    fn card_balance(&self, user: &str, card: &str) -> i64 {
+        self.balance(user, card)
     }
 
     fn account(&self, user: &str, id: &str, kind: &str, initial: i64) {
@@ -243,6 +280,53 @@ fn repayment(
         "kind":"repayment", "loan_id":loan_id, "account_id":"bank",
         "date":"2026-11-15", "principal":principal, "interest":interest,
         "fee":fee, "category_id":category
+    })
+}
+
+fn purchase_entry(
+    account: &str,
+    category: &str,
+    amount: i64,
+    date: &str,
+    first_due: &str,
+    periods: u16,
+) -> Value {
+    json!({
+        "kind":"purchase", "name":"Compra", "account_id":account,
+        "category_id":category, "amount":amount, "date":date,
+        "first_due":first_due, "periods":periods
+    })
+}
+
+fn payment_change(id: &str, account: &str, card: &str, amount: i64, date: &str) -> Value {
+    json!({
+        "request_id":format!("req-{id}"), "id":id, "expected_version":0,
+        "deleted":false, "kind":"payment", "account_id":account,
+        "card_account_id":card, "amount":amount, "date":date
+    })
+}
+
+fn payment_edit(id: &str, account: &str, card: &str, amount: i64, version: i64) -> Value {
+    json!({
+        "request_id":format!("req-{id}-{version}"), "id":id, "expected_version":version,
+        "deleted":false, "kind":"payment", "account_id":account,
+        "card_account_id":card, "amount":amount, "date":"2026-11-15"
+    })
+}
+
+fn allocate_entry(operation_id: &str, version: i64, month: &str, amount: i64) -> Value {
+    json!({
+        "kind":"allocate", "operation_id":operation_id,
+        "expected_version":version, "month":month, "amount":amount
+    })
+}
+
+fn refund_change(id: &str, account: &str, category: &str, original: &str, amount: i64) -> Value {
+    json!({
+        "request_id":format!("req-{id}"), "id":id, "expected_version":0,
+        "deleted":false, "kind":"refund", "account_id":account,
+        "category_id":category, "original_operation_id":original,
+        "amount":amount, "date":"2026-11-05"
     })
 }
 
@@ -624,6 +708,451 @@ async fn b06_replay_is_idempotent_and_changed_payload_conflicts() {
     assert_eq!(
         f.portfolio(&f.admin).await["loans"][0]["outstanding"],
         json!(800)
+    );
+    f.integrity();
+}
+
+#[tokio::test]
+async fn c01_card_payment_settles_debt_without_expense() {
+    let f = Fixture::new().await;
+    f.account(&f.admin.id, "bank", "bank", 1000);
+    f.account(&f.admin.id, "card", "card", 300);
+    let before = f.report(&f.admin).await;
+    assert_eq!(before["net_worth"], json!("700"));
+
+    assert_eq!(
+        f.operation(
+            &f.admin,
+            payment_change("pay-card", "bank", "card", 300, "2026-11-15")
+        )
+        .await,
+        StatusCode::OK
+    );
+    assert_eq!(f.balance(&f.admin.id, "bank"), 700);
+    assert_eq!(f.card_balance(&f.admin.id, "card"), 0);
+    assert_eq!(
+        f.postings(&f.admin.id),
+        vec![
+            ("pay-card".into(), "bank".into(), -300),
+            ("pay-card".into(), "card".into(), -300),
+        ]
+    );
+    let report = f.report(&f.admin).await;
+    assert_eq!(report["balances"]["bank"], json!("700"));
+    assert_eq!(report["balances"]["card"], json!("0"));
+    assert_eq!(report["net_worth"], json!("700"));
+    assert_eq!(report["income"], json!("0"));
+    assert_eq!(report["expense"], json!("0"));
+    assert_eq!(report["net"], json!("0"));
+    assert_eq!(report["cash_flow"], json!("-300"));
+    f.integrity();
+}
+
+#[tokio::test]
+async fn c02_purchase_then_payment_counts_the_expense_once() {
+    let f = Fixture::new().await;
+    f.account(&f.admin.id, "bank", "bank", 1000);
+    f.account(&f.admin.id, "card", "card", 0);
+    f.category(&f.admin.id, "goods");
+    let (status, request) = f
+        .send_new(
+            &f.admin,
+            purchase_entry("card", "goods", 300, "2026-11-02", "2026-11-20", 1),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let purchase_id = format!("loan:{request}:purchase");
+    assert_eq!(f.card_balance(&f.admin.id, "card"), 300);
+    let after_purchase = f.report(&f.admin).await;
+    assert_eq!(after_purchase["net_worth"], json!("700"));
+    assert_eq!(after_purchase["expense"], json!("300"));
+    assert_eq!(after_purchase["net"], json!("-300"));
+    assert_eq!(after_purchase["cash_flow"], json!("0"));
+    assert_eq!(
+        f.scalar(
+            "SELECT COUNT(*) FROM finance_operations WHERE user_id=?",
+            &f.admin.id
+        ),
+        1
+    );
+
+    assert_eq!(
+        f.operation(
+            &f.admin,
+            payment_change("pay-buy", "bank", "card", 300, "2026-11-15")
+        )
+        .await,
+        StatusCode::OK
+    );
+    assert_eq!(f.balance(&f.admin.id, "bank"), 700);
+    assert_eq!(f.card_balance(&f.admin.id, "card"), 0);
+    assert_eq!(
+        f.postings(&f.admin.id)
+            .iter()
+            .map(|(_, _, d)| *d)
+            .sum::<i64>(),
+        -300
+    );
+    let report = f.report(&f.admin).await;
+    assert_eq!(report["net_worth"], json!("700"));
+    assert_eq!(report["expense"], json!("300"));
+    assert_eq!(report["net"], json!("-300"));
+    assert_eq!(report["cash_flow"], json!("-300"));
+    let portfolio = f.portfolio(&f.admin).await;
+    assert_eq!(
+        portfolio["purchases"][0]["operation_id"],
+        json!(purchase_id)
+    );
+    assert_eq!(
+        portfolio["purchases"][0]["installments"][0]["principal"],
+        json!(300)
+    );
+    f.integrity();
+}
+
+#[tokio::test]
+async fn c03_installments_are_projected_not_posted() {
+    let f = Fixture::new().await;
+    f.account(&f.admin.id, "bank", "bank", 1000);
+    f.account(&f.admin.id, "card", "card", 0);
+    f.category(&f.admin.id, "goods");
+    let (status, request) = f
+        .send_new(
+            &f.admin,
+            purchase_entry("card", "goods", 300, "2026-01-02", "2026-01-15", 3),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let portfolio = f.portfolio(&f.admin).await;
+    let installments = portfolio["purchases"][0]["installments"]
+        .as_array()
+        .unwrap();
+    assert_eq!(installments.len(), 3);
+    assert_eq!(
+        installments
+            .iter()
+            .map(|i| (
+                i["date"].as_str().unwrap(),
+                i["principal"].as_i64().unwrap()
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            ("2026-01-15", 100),
+            ("2026-02-15", 100),
+            ("2026-03-15", 100),
+        ]
+    );
+    assert_eq!(
+        installments
+            .iter()
+            .map(|i| i["principal"].as_i64().unwrap())
+            .sum::<i64>(),
+        300
+    );
+    assert_eq!(f.card_balance(&f.admin.id, "card"), 300);
+    assert_eq!(
+        f.scalar(
+            "SELECT COUNT(*) FROM finance_operations WHERE user_id=?",
+            &f.admin.id
+        ),
+        1,
+        "no accounting operation per projected installment"
+    );
+    assert_eq!(
+        f.scalar(
+            "SELECT COUNT(*) FROM credit_purchases WHERE user_id=?",
+            &f.admin.id
+        ),
+        1
+    );
+
+    assert_eq!(
+        f.operation(
+            &f.admin,
+            payment_change("pay-cuota", "bank", "card", 100, "2026-03-10")
+        )
+        .await,
+        StatusCode::OK
+    );
+    assert_eq!(f.card_balance(&f.admin.id, "card"), 200);
+    let portfolio = f.portfolio(&f.admin).await;
+    assert_eq!(
+        portfolio["purchases"][0]["installments"]
+            .as_array()
+            .unwrap()
+            .len(),
+        3
+    );
+    assert_eq!(f.card_balance(&f.admin.id, "card"), 200);
+    let _ = request;
+    f.integrity();
+}
+
+#[tokio::test]
+async fn c04_cancel_purchase_reverts_and_respects_refunds() {
+    let f = Fixture::new().await;
+    f.account(&f.admin.id, "bank", "bank", 1000);
+    f.account(&f.admin.id, "card", "card", 0);
+    f.category(&f.admin.id, "goods");
+    let (status, request) = f
+        .send_new(
+            &f.admin,
+            purchase_entry("card", "goods", 300, "2026-11-02", "2026-11-20", 1),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let purchase_id = format!("loan:{request}:purchase");
+    let cancel = json!({"kind":"cancel_purchase","operation_id":purchase_id});
+    let (status, cancel_id) = f.send_new(&f.admin, cancel.clone()).await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(
+        f.send(&f.admin, cancel.clone(), &cancel_id).await,
+        StatusCode::NO_CONTENT
+    );
+    let foreign = f.new_user("foreign").await;
+    let (status, _) = f.send_new(&foreign, cancel).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+
+    assert_eq!(f.card_balance(&f.admin.id, "card"), 0);
+    let (deleted, history) = {
+        let conn = f.db.0.lock().unwrap();
+        let deleted: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM finance_operations WHERE user_id=?1 AND deleted=1",
+                params![f.admin.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let history: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM finance_operation_history WHERE user_id=?1",
+                params![f.admin.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        (deleted, history)
+    };
+    assert_eq!(deleted, 1);
+    assert_eq!(history, 2);
+    assert_eq!(
+        f.scalar(
+            "SELECT COUNT(*) FROM credit_purchases WHERE user_id=?",
+            &f.admin.id
+        ),
+        0
+    );
+    assert!(
+        f.portfolio(&f.admin).await["purchases"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let report = f.report(&f.admin).await;
+    assert_eq!(report["expense"], json!("0"));
+    assert_eq!(report["net_worth"], json!("1000"));
+    f.integrity();
+
+    // A linked refund blocks cancellation (existing refund rule, unchanged).
+    let g = Fixture::new().await;
+    g.account(&g.admin.id, "bank", "bank", 1000);
+    g.account(&g.admin.id, "card", "card", 0);
+    g.category(&g.admin.id, "goods");
+    let (status, request) = g
+        .send_new(
+            &g.admin,
+            purchase_entry("card", "goods", 300, "2026-11-02", "2026-11-20", 1),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let purchase_id = format!("loan:{request}:purchase");
+    assert_eq!(
+        g.operation(
+            &g.admin,
+            refund_change("refund", "card", "goods", &purchase_id, 50)
+        )
+        .await,
+        StatusCode::OK
+    );
+    assert_eq!(g.card_balance(&g.admin.id, "card"), 250);
+    let (status, _) = g
+        .send_new(
+            &g.admin,
+            json!({"kind":"cancel_purchase","operation_id":purchase_id}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(g.report(&g.admin).await["expense"], json!("250"));
+    g.integrity();
+}
+
+#[tokio::test]
+async fn c05_monthly_allocations_follow_payment_version() {
+    let f = Fixture::new().await;
+    f.account(&f.admin.id, "bank", "bank", 1000);
+    f.account(&f.admin.id, "card", "card", 0);
+    assert_eq!(
+        f.operation(
+            &f.admin,
+            payment_change("pay-a", "bank", "card", 100, "2026-11-15")
+        )
+        .await,
+        StatusCode::OK
+    );
+    for (month, amount) in [("2026-01", 70), ("2026-02", 30)] {
+        assert_eq!(
+            f.send_new(&f.admin, allocate_entry("pay-a", 1, month, amount))
+                .await
+                .0,
+            StatusCode::NO_CONTENT
+        );
+    }
+    assert_eq!(
+        f.send_new(&f.admin, allocate_entry("pay-a", 1, "2026-02", 40))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        f.send_new(&f.admin, allocate_entry("pay-a", 0, "2026-02", 30))
+            .await
+            .0,
+        StatusCode::CONFLICT
+    );
+    let allocations = f.portfolio(&f.admin).await["allocations"].clone();
+    assert_eq!(
+        allocations
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| (a["month"].as_str().unwrap(), a["amount"].as_i64().unwrap()))
+            .collect::<Vec<_>>(),
+        vec![("2026-01", 70), ("2026-02", 30)]
+    );
+
+    assert_eq!(
+        f.operation(
+            &f.admin,
+            payment_change("pay-b", "bank", "card", 50, "2026-11-16")
+        )
+        .await,
+        StatusCode::OK
+    );
+    assert_eq!(
+        f.send_new(&f.admin, allocate_entry("pay-b", 1, "2026-01", 50))
+            .await
+            .0,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        f.operation(&f.admin, payment_edit("pay-a", "bank", "card", 60, 1))
+            .await,
+        StatusCode::OK
+    );
+    let remaining = f.scalar(
+        "SELECT COUNT(*) FROM credit_allocations WHERE user_id=?",
+        &f.admin.id,
+    );
+    assert_eq!(remaining, 1);
+    let allocations = f.portfolio(&f.admin).await["allocations"].clone();
+    assert_eq!(allocations.as_array().unwrap().len(), 1);
+    assert_eq!(allocations[0]["operation_id"], json!("pay-b"));
+    assert_eq!(allocations[0]["amount"], json!(50));
+    f.integrity();
+}
+
+#[tokio::test]
+async fn c06_initial_card_balance_sign_is_unambiguous_in_the_backend() {
+    let f = Fixture::new().await;
+    f.account(&f.admin.id, "bank", "bank", 1000);
+    f.account(&f.admin.id, "debt", "card", 300);
+    f.account(&f.admin.id, "credit", "card", -300);
+    f.details(&f.admin.id, "debt", Some(20), Some(5), Some("2026-11-05"));
+    f.details(&f.admin.id, "credit", Some(20), Some(5), Some("2026-11-05"));
+    let report = f.report(&f.admin).await;
+    assert_eq!(report["balances"]["debt"], json!("300"));
+    assert_eq!(report["balances"]["credit"], json!("-300"));
+    // Backend: a positive card balance is a debt, a negative one is a credit.
+    assert_eq!(report["net_worth"], json!("1000"));
+    f.integrity();
+}
+
+#[tokio::test]
+async fn c07_card_rejections_are_atomic_and_idempotent() {
+    let f = Fixture::new().await;
+    f.account(&f.admin.id, "bank", "bank", 1000);
+    f.account(&f.admin.id, "card", "card", 0);
+    f.category(&f.admin.id, "goods");
+    let (status, request) = f
+        .send_new(
+            &f.admin,
+            purchase_entry("card", "goods", 300, "2026-11-02", "2026-11-20", 1),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let purchase = purchase_entry("card", "goods", 300, "2026-11-02", "2026-11-20", 1);
+    assert_eq!(
+        f.send(&f.admin, purchase.clone(), &request).await,
+        StatusCode::NO_CONTENT
+    );
+    assert_eq!(
+        f.send(
+            &f.admin,
+            purchase_entry("card", "goods", 999, "2026-11-02", "2026-11-20", 1),
+            &request
+        )
+        .await,
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        f.scalar(
+            "SELECT COUNT(*) FROM credit_purchases WHERE user_id=?",
+            &f.admin.id
+        ),
+        1
+    );
+
+    for (change, expected) in [
+        (
+            payment_change("p-missing", "ghost", "card", 10, "2026-11-15"),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            payment_change("p-no-card", "bank", "bank", 10, "2026-11-15"),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            json!({
+                "request_id":"alloc-over", "id":"pay-a", "expected_version":0,
+                "deleted":false, "kind":"payment", "account_id":"bank",
+                "card_account_id":"card", "amount":10, "date":"2026-11-15"
+            }),
+            StatusCode::OK,
+        ),
+    ] {
+        assert_eq!(f.operation(&f.admin, change).await, expected);
+    }
+    assert_eq!(
+        f.send_new(&f.admin, allocate_entry("pay-a", 1, "2026-01", 11))
+            .await
+            .0,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        f.send_new(
+            &f.admin,
+            json!({"kind":"cancel_purchase","operation_id":"missing"})
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(f.card_balance(&f.admin.id, "card"), 290);
+    assert_eq!(
+        f.scalar(
+            "SELECT COUNT(*) FROM finance_operations WHERE user_id=?",
+            &f.admin.id
+        ),
+        2
     );
     f.integrity();
 }

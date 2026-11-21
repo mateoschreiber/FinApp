@@ -275,3 +275,44 @@ Nuevo archivo `tests/credit_flows.rs` (7 pruebas de integración sobre el router
 No se detectaron defectos: el backend ya aplica estas reglas. No se modificó código de producción, fórmulas de amortización ni `creditProjection` del frontend (queda para F9.2D). Riesgos para F9.2C y F9.2D: compra en cuotas con cargo al resumen, asignación de pagos por mes y coherencia entre `creditProjection`, `cardStatement` y la cartera del servidor.
 
 Validación: `cargo test --locked --test credit_flows` (7/7), `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked` (**85 Rust**: 41 lib, 14 auth, 7 credit_flows, 2 credit_migration, 8 finance_api, 6 finance_invariants, 3 full_flow, 4 import_load), `npm test` (**40 JS**), build y suite Docker: todo en verde. Cero pruebas ignoradas.
+
+## F9.2C — Tarjetas de crédito
+
+Se amplió `tests/credit_flows.rs` con 7 escenarios (total 14 en el archivo) y se creó `tests/card_statement.test.mjs` (6 pruebas). Contratos confirmados: `POST /api/credit` → 204/400/404/409; `POST /api/operations` → 200 al aplicar; `GET /api/credit` → 200. Oráculos literales y SQL directo; cero cambios de producción.
+
+| ID | Esperado = observado | Estado |
+|---|---|---|
+| 2C-01 pago de deuda 300 | banco 700, tarjeta 0, patrimonio 700, income/expense/net 0, cash_flow −300; postings banco −300 y tarjeta −300 | OK |
+| 2C-02 compra 300 + pago | tras compra: deuda 300, patrimonio 700, expense 300, cash_flow 0; tras pago: banco 700, deuda 0, patrimonio 700, expense 300 (una vez), cash_flow −300 | OK |
+| 2C-03 compra en 3 cuotas | 1 sola operación, 1 compra, cuotas [100,100,100] en 2026-01-15/02-15/03-15, suma 300; pago 100 → deuda 200; sin operaciones ficticias por cuota | OK |
+| 2C-04 anulación de compra | deuda 0, operación tombstoned, compra fuera de cartera, historial 2 filas, replay sin efectos, usuario ajeno 404; con reembolso de 50 → 400 y gasto 250 | OK |
+| 2C-05 asignaciones | 70 ene + 30 feb; exceso 40 → 400, versión obsoleta → 409; editar pago a 60 borra solo sus asignaciones (queda la del otro pago) | OK |
+| 2C-06 cierre y vencimiento | ciclo `(día de cierre del mes anterior, día de cierre del mes]`; vencimiento mes siguiente si `due_day <= closing_day`; bisiesto, días 29/30/31 y paso de diciembre a enero | OK |
+| 2C-07 saldo inicial | backend: saldo de tarjeta positivo = deuda (patrimonio −300); negativo = crédito (patrimonio +300) | OK (backend) |
+
+### Semántica verificada
+
+- Deuda total = saldo contable de la tarjeta en el backend (`finance_postings` invierte el signo de las cuentas `card`).
+- Las cuotas de una compra financiada son **solo proyección** en `credit_purchases`; no generan operaciones ni deudas separadas.
+- El extracto (`cardStatement`) carga cada cuota cuyo `first_due + índice` cae en el ciclo; no es igual a la deuda total ni al pendiente del extracto.
+- `paid` del extracto solo descuenta asignaciones con `payment_version` igual a la versión actual del pago.
+- `first_due` es la fecha de la primera cuota projected, **no** el cierre ni el vencimiento del extracto (calculados desde `closing_day`/`due_day`).
+
+### Ambigüedad confirmada (sin cambio de código)
+
+El backend trata `initial_balance > 0` en tarjeta como deuda y `< 0` como crédito; `cardStatement` (`static/credit.mjs:78-80`) invierte ese signo al atravesar un `cutoff_date`: con `-500` muestra deuda de apertura 500 y con `+500` muestra `-500` de cargos. Es una inconsistencia contable/visual heredada de importaciones históricas. Se dejó documentada y cubierta por pruebas de ambos signos; corregirla cambiaría extractos ya mostrados y requiere decisión de negocio. Propuesta compatible: usar el saldo positivo como deuda de apertura en el ciclo del corte y migrar solo la presentación, nunca los datos.
+
+### Mutaciones (restauradas; diff limpio)
+
+| Mutación | Prueba que falló |
+|---|---|
+| Doble contabilización de compra financiada en `cardStatement` | `financed purchase charges one installment per cycle` |
+| Signo del pago invertido en el extracto | `only allocations with the current payment version...` |
+| Cuota asignada a período incorrecto | `financed purchase...` |
+| Asignación por encima del total del pago | `c05_monthly_allocations_follow_payment_version` |
+
+### Resultado y riesgos
+
+No se detectaron defectos nuevos en backend. Riesgo pendiente para F9.2D: `creditProjection` mezcla deuda de tarjeta, cuotas de préstamos y proyecciones; aún no se compara contra la cartera del servidor. Riesgo histórico: la ambigüedad de signo del saldo inicial de tarjetas importadas.
+
+Validación: `cargo test --locked --test credit_flows` (14/14), `node --test tests/card_statement.test.mjs` (6/6), `cargo fmt --check`, `clippy -D warnings`, `cargo test --locked` (**92 Rust**: 41 lib, 14 auth, 14 credit_flows, 2 credit_migration, 8 finance_api, 6 finance_invariants, 3 full_flow, 4 import_load), `npm test` (**46 JS**), build y suite Docker: todo en verde. Cero pruebas ignoradas. README sin cambios: no hay regla funcional nueva para el usuario.
