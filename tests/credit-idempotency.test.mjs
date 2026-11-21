@@ -156,3 +156,21 @@ test('F: the UI does not say Guardado after a rejected POST', async () => {
   assert.equal(h.posts.length, 1);
   assert.notEqual(h.status(), 'Guardado.');
 });
+
+// F10.1C: a corrupted session value must degrade to the session message, not a crash.
+test('G: corrupted localStorage degrades to the session message', async () => {
+  const original = globalThis.localStorage;
+  globalThis.localStorage = { getItem: () => '{bad' };
+  try {
+    const h = harness(() => {});
+    await renderCredit(h.container, h.ctx);
+    const form = h.ready()[0];
+    fillPayment(form);
+    form.dispatch('submit');
+    await settle();
+    assert.equal(h.posts.length, 0);
+    assert.equal(h.status(), 'La sesión cambió. Vuelve a abrir Créditos.');
+  } finally {
+    globalThis.localStorage = original;
+  }
+});

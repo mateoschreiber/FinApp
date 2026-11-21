@@ -1,30 +1,8 @@
 import {creditProjection} from './credit.mjs';
+import {element as node, money as formatMoney, field, chunkedText} from './ui.mjs';
 
-const formatMoney = amount => new Intl.NumberFormat('es-PY').format(BigInt(amount)) + ' Gs.';
 const byId = items => new Map(items.map(item => [item.id, item.name]));
 const kinds = {income:'Ingreso', expense:'Gasto', payment:'Pago de tarjeta', transfer:'Transferencia', refund:'Devolución'};
-
-function node(tag, text) {
-  const el = document.createElement(tag);
-  if (text !== undefined) el.textContent = text;
-  return el;
-}
-function field(form, label, name, type, options = {}) {
-  const wrap = node('label',label);
-  const input = node(type === 'select' ? 'select' : 'input');
-  input.name = name;
-  if (type === 'select') {
-    for (const item of options.items) {
-      const opt = node('option',item.name);
-      opt.value=item.id;
-      input.append(opt);
-    }
-  } else input.type=type;
-  for (const [key,value] of Object.entries(options)) if (key !== 'items') input[key]=value;
-  input.required = options.required ?? true;
-  wrap.append(input); form.append(wrap);
-  return input;
-}
 function section(root, title) {
   const el=node('section');
   el.append(node('h3',title));
@@ -65,9 +43,7 @@ function newForm(root, title, finish) {
 }
 function hexOf(buffer) {
   const chars=Array.from({length:256},(_,i)=>i.toString(16).padStart(2,'0'));
-  const bytes=new Uint8Array(buffer), chunks=[];
-  for(let start=0;start<bytes.length;start+=8192) chunks.push(Array.from(bytes.subarray(start,start+8192),v=>chars[v]).join(''));
-  return chunks.join('');
+  return chunkedText(new Uint8Array(buffer), chunk=>Array.from(chunk,v=>chars[v]).join(''));
 }
 export async function renderPlanning(container, {api, getView, today, isCurrent, synchronize}) {
   const shell=node('div'), heading=node('h2','Planificación e informes'), controls=node('div'), body=node('div');
@@ -110,7 +86,24 @@ export async function renderPlanning(container, {api, getView, today, isCurrent,
     totals.append(node('p',report.reviewed?'Mes revisado.':'Mes pendiente de revisión.'));
     if(!report.reviewed) totals.append(action('Marcar mes como revisado',()=>run(()=>api('/api/planning/month/'+report.month,'POST',{digest:report.digest}))));
     table(totals,['Cuenta','Gasto neto'],Object.entries(report.accounts).map(([id,amount])=>[accounts.get(id)||id,formatMoney(amount)]));
-    table(totals,['Categoría','Gasto neto'],Object.entries(report.categories).map(([id,amount])=>[categories.get(id)||id,formatMoney(amount)]));
+    // Bars instead of a second table: the same numbers, readable at a glance.
+    const perCategory=Object.entries(report.categories)
+      .map(([id,amount])=>({name:categories.get(id)||id,amount:BigInt(amount)}))
+      .sort((a,b)=>b.amount-a.amount);
+    if (perCategory.length) {
+      const max=perCategory[0].amount;
+      const chart=node('div',null,'bars');
+      for (const item of perCategory) {
+        const row=node('div',null,'bar-row');
+        row.append(node('p',item.name+' · '+formatMoney(item.amount)));
+        const bar=node('div',null,'bar');
+        const width=max>0n?Number(item.amount*10000n/max)/100:0;
+        bar.style.width=Math.max(width,0)+'%';
+        row.append(bar);
+        chart.append(row);
+      }
+      totals.append(node('h3','Gastos netos por categoría'),chart);
+    }
     const budgets=section(body,'Presupuestos del mes');
     table(budgets,['Categoría','Presupuesto','Gastado','Disponible',''],report.budgets.map(b=>{
       const spent=BigInt(report.categories[b.category_id]||0);

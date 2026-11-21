@@ -51,6 +51,16 @@ export function monthlyTotals(operations, month) {
   return {income, expense, net: income - expense};
 }
 
+// Server rule (src/planning.rs): a positive card balance is debt, so it subtracts.
+// shortcut: loan debt is not part of the offline snapshot, so it cannot be subtracted here; upgrade if the credit portfolio gets cached locally.
+export function netWorth(accounts, balances) {
+  let net = 0n;
+  for (const a of accounts) {
+    net += BigInt(balances.get(a.id) ?? 0) * (a.kind === 'card' ? -1n : 1n);
+  }
+  return net;
+}
+
 export function overlayOperations(operations, pending) {
   const values = new Map(operations.map(op => [op.id, {...op}]));
   const remaining = [...pending];

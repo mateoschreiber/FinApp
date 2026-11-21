@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { calculateBalances, overlayOperations, checkEditBase, setupStep, monthlyTotals } from '../static/view-model.mjs';
+import { calculateBalances, overlayOperations, checkEditBase, setupStep, monthlyTotals, netWorth } from '../static/view-model.mjs';
 
 test('los totales del mes siguen la semántica del informe del servidor', () => {
   const operations = [
@@ -62,4 +62,12 @@ test('impide guardar una edición si cambió la cola desde que se abrió el form
   assert.throws(()=>checkEditBase('previo', 'nuevo'), /cambió/);
   assert.doesNotThrow(()=>checkEditBase('previo','previo'));
   assert.throws(()=>checkEditBase(null,'nuevo'), /cambió/);
+});
+
+test('el patrimonio resta la deuda de tarjeta como el informe del servidor', () => {
+  const accounts = [{id:'cash',kind:'cash'},{id:'bank',kind:'bank'},{id:'card',kind:'card'}];
+  const balances = new Map([['cash',1000000],['bank',0],['card',300000]]);
+  assert.equal(netWorth(accounts, balances), 700000n);
+  assert.equal(netWorth([{id:'card',kind:'card'}], new Map([['card',-300000]])), 300000n);
+  assert.equal(netWorth([], new Map()), 0n);
 });

@@ -4,7 +4,6 @@ pub mod credit;
 pub mod db;
 pub mod exchange;
 pub mod finance;
-pub mod history;
 pub mod planning;
 pub mod reconciliation;
 
@@ -126,7 +125,6 @@ pub fn app(db: Database, origin: String) -> Router {
         .merge(catalog::routes())
         .merge(credit::routes())
         .merge(exchange::routes())
-        .merge(history::routes())
         .merge(planning::routes())
         .merge(reconciliation::routes())
         .fallback_service(tower_http::services::ServeDir::new("static"))

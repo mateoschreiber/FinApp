@@ -1,7 +1,7 @@
 const CACHE = 'misfinanzas-shell-v4';
 const SHELL = [
   '/', '/index.html', '/style.css', '/app.mjs', '/view-model.mjs',
-  '/offline-store.mjs', '/sync.mjs', '/extras.mjs', '/credit.mjs',
+  '/offline-store.mjs', '/sync.mjs', '/ui.mjs', '/extras.mjs', '/credit.mjs',
   '/planning.mjs', '/reconciliation.mjs', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png',
 ];
 

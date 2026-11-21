@@ -1,12 +1,7 @@
+import {element as el, money} from './ui.mjs';
+
 const mounted = new WeakMap();
 const labelForKind = {income:'Ingreso',expense:'Gasto',payment:'Pago de tarjeta',transfer:'Transferencia',refund:'Devolución',loan_draw:'Desembolso',loan_repayment:'Pago de préstamo'};
-const money = new Intl.NumberFormat('es-PY');
-
-function el(tag,text) {
-  const node=document.createElement(tag);
-  if (text!==undefined) node.textContent=text;
-  return node;
-}
 
 export function renderReconciliation(container, context) {
   const existing=mounted.get(container);
@@ -68,7 +63,7 @@ export function renderReconciliation(container, context) {
     results.append(el('p',data.total ? data.total+' línea(s) · Página '+data.page+' de '+data.pages : 'Aún no hay líneas de extracto.'));
     for (const line of data.rows) {
       const row=el('article');row.className='row';
-      row.append(el('strong',line.date+' · '+money.format(line.amount)+' Gs.'),el('p',[line.description,line.reference].filter(Boolean).join(' · ')));
+      row.append(el('strong',line.date+' · '+money(line.amount)),el('p',[line.description,line.reference].filter(Boolean).join(' · ')));
       const link={account_id:account,line_id:line.line_id};
       if(line.operation_id) {
         row.append(el('p',line.stale ? 'El movimiento vinculado cambió. Revisa su conciliación.' : 'Conciliado.'));

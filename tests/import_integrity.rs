@@ -242,6 +242,10 @@ fn xlsx_full(
             related.unwrap_or("").to_string(),
         ]);
     }
+    package(&cuentas, &categorias, &filas)
+}
+
+fn package(cuentas: &[Vec<String>], categorias: &[Vec<String>], filas: &[Vec<String>]) -> String {
     let content_types = r#"<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/sharedStrings.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sharedStrings+xml"/></Types>"#;
     let book = r#"<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Cuentas" sheetId="1" r:id="rId1"/><sheet name="Categorias" sheetId="2" r:id="rId2"/><sheet name="Movimientos" sheetId="3" r:id="rId3"/></sheets></workbook>"#;
     let rel = r#"<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/><Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet2.xml"/><Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet3.xml"/></Relationships>"#;
@@ -254,14 +258,57 @@ fn xlsx_full(
         ("xl/workbook.xml", book),
         ("xl/_rels/workbook.xml.rels", rel),
         ("xl/sharedStrings.xml", shared),
-        ("xl/worksheets/sheet1.xml", &sheet(&cuentas)),
-        ("xl/worksheets/sheet2.xml", &sheet(&categorias)),
-        ("xl/worksheets/sheet3.xml", &sheet(&filas)),
+        ("xl/worksheets/sheet1.xml", &sheet(cuentas)),
+        ("xl/worksheets/sheet2.xml", &sheet(categorias)),
+        ("xl/worksheets/sheet3.xml", &sheet(filas)),
     ] {
         zip.start_file(name, options).unwrap();
         std::io::Write::write_all(&mut zip, content.as_bytes()).unwrap();
     }
     STANDARD.encode(zip.finish().unwrap().into_inner())
+}
+
+/// F10.1B: a loan repayment row with interest and an external category id.
+fn xlsx_repayment() -> String {
+    let cuentas = vec![
+        ["cuenta_id", "tipo", "nombre", "saldo_inicial"]
+            .map(String::from)
+            .to_vec(),
+        ["bank", "banco", "Banco", "0"].map(String::from).to_vec(),
+    ];
+    let categorias = vec![
+        ["categoria_id", "tipo", "nombre"]
+            .map(String::from)
+            .to_vec(),
+        ["cat-ext", "gasto", "Intereses externos"]
+            .map(String::from)
+            .to_vec(),
+    ];
+    let movimientos = vec![
+        [
+            "movimiento_id",
+            "tipo",
+            "fecha",
+            "cuenta_origen_id",
+            "categoria_id",
+            "monto",
+            "interes",
+        ]
+        .map(String::from)
+        .to_vec(),
+        [
+            "p1",
+            "pago_prestamo",
+            "2026-11-15",
+            "bank",
+            "cat-ext",
+            "221",
+            "21",
+        ]
+        .map(String::from)
+        .to_vec(),
+    ];
+    package(&cuentas, &categorias, &movimientos)
 }
 
 /// Default workbook: one expense category and movements without related references.
@@ -1883,5 +1930,52 @@ async fn another_user_cannot_confirm_with_a_foreign_token() {
     let text =
         String::from_utf8_lossy(&res.into_body().collect().await.unwrap().to_bytes()).to_string();
     assert!(text.contains("La vista previa cambió"), "{text}");
+    f.integrity();
+}
+
+/// F10.1B: the interest part of an imported loan repayment honors the linked category.
+#[tokio::test]
+async fn f10_loan_repayment_interest_uses_the_linked_category() {
+    let f = Fixture::new().await;
+    save_category(&f, "interest", "expense");
+    let file = xlsx_repayment();
+    let mut value = body_with(
+        &file,
+        None,
+        None,
+        json!({}),
+        json!({"cat-ext": "interest"}),
+        json!({}),
+    );
+    let (status, report) = f.import(value.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert!(report["errors"].as_array().unwrap().is_empty(), "{report}");
+    let token = report["token"].as_str().unwrap().to_owned();
+    value["preview_token"] = json!(token);
+    let (status, done) = f.import(value).await;
+    assert_eq!(status, StatusCode::OK, "{done}");
+    assert_eq!(done["committed"], json!(true));
+    assert_eq!(
+        count(
+            &f,
+            "SELECT COUNT(*) FROM finance_operations WHERE user_id=?"
+        ),
+        2
+    );
+    assert_eq!(
+        count(
+            &f,
+            "SELECT COUNT(*) FROM finance_operations WHERE user_id=? AND id='p1' AND kind='loan_repayment' AND amount=200"
+        ),
+        1
+    );
+    assert_eq!(
+        count(
+            &f,
+            "SELECT COUNT(*) FROM finance_operations WHERE user_id=? AND kind='expense' AND category_id='interest' AND amount=21"
+        ),
+        1
+    );
+    assert_eq!(f.balance("bank"), -221);
     f.integrity();
 }

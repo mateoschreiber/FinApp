@@ -471,7 +471,7 @@ impl Import<'_> {
         };
         let mut category = optional(value(row, "categoria_id"));
         if let Some(external) = category.as_deref()
-            && matches!(ty, "income" | "expense" | "refund")
+            && matches!(ty, "income" | "expense" | "refund" | "loan_repayment")
         {
             let expected = if ty == "income" { "income" } else { "expense" };
             category = Some(self.category_target(conn, external, expected)?);

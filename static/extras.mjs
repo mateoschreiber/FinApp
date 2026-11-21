@@ -1,3 +1,5 @@
+import {element, money, chunkedText} from './ui.mjs';
+
 export function enrichCatalog(snapshot) {
   for (const [entity, items] of [['account', snapshot.accounts], ['category', snapshot.categories]]) {
     const metadata = new Map((snapshot.catalog_details || []).filter(d => d.entity === entity).map(d => [d.id, d]));
@@ -9,23 +11,9 @@ const titles = {
   cash: 'Efectivo', bank: 'Banco', wallet: 'Billetera', card: 'Tarjeta de crédito',
 };
 
-function element(tag, text) {
-  const result = document.createElement(tag);
-  if (text !== undefined) result.textContent = text;
-  return result;
-}
-
 async function fileBase64(file) {
   const bytes = new Uint8Array(await file.arrayBuffer());
-  const chunks = [];
-  for (let start = 0; start < bytes.length; start += 8192) {
-    chunks.push(String.fromCharCode(...bytes.subarray(start, start + 8192)));
-  }
-  return btoa(chunks.join(''));
-}
-
-function money(value) {
-  return new Intl.NumberFormat('es-PY').format(BigInt(value)) + ' Gs.';
+  return btoa(chunkedText(bytes, chunk => String.fromCharCode(...chunk)));
 }
 
 export function renderData(container, {api, getView, today, synchronize, isCurrent}) {

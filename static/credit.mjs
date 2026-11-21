@@ -1,3 +1,5 @@
+import {element as el, money, field, lastIdentity} from './ui.mjs';
+
 // Dates are stored as civil dates in Paraguay. UTC arithmetic avoids DST shifts.
 function dayOfMonth(month, day, offset = 0) {
   const [y, m] = month.split('-').map(Number);
@@ -84,30 +86,11 @@ export function cardStatement(account, month, operations, portfolio) {
   return {closing, due, charges:safeNumber(charges), paid:safeNumber(paid), outstanding:safeNumber(charges-paid), opening:safeNumber(opening)};
 }
 
-const money = amount => new Intl.NumberFormat('es-PY').format(amount) + ' Gs.';
-function el(tag, text) {
-  const result=document.createElement(tag);
-  if (text !== undefined) result.textContent=text;
-  return result;
-}
 function section(parent, title) {
   const details=el('details');
   details.append(el('summary',title));
   parent.append(details);
   return details;
-}
-function field(form, caption, name, type, options = {}) {
-  const label=el('label',caption);
-  const input=el(type === 'select' ? 'select' : 'input');
-  if (type === 'select') {
-    for (const [value, name] of options.items) {
-      const option=el('option',name); option.value=value; input.append(option);
-    }
-  } else input.type=type;
-  for (const [key,value] of Object.entries(options)) if (key !== 'items') input[key]=value;
-  input.name=name; input.required=options.required ?? true;
-  label.append(input); form.append(label);
-  return input;
 }
 function number(form, label, name, min = 1, value = '', max = Number.MAX_SAFE_INTEGER) {
   return field(form,label,name,'number',{min,max,step:1,value});
@@ -153,7 +136,7 @@ export async function renderCredit(container, ctx) {
       if (!current() || submit.disabled) return;
       submit.disabled=true;
       try {
-        const identity=JSON.parse(localStorage.getItem('misfinanzas:last-user')||'null');
+        const identity=lastIdentity();
         if (!identity || identity.id!==userId) throw new Error('La sesión cambió. Vuelve a abrir Créditos.');
         const entry=read(Object.fromEntries(new FormData(form)));
         const key=JSON.stringify(entry);
@@ -179,7 +162,7 @@ export async function renderCredit(container, ctx) {
       if (!confirm(question)) return;
       button.disabled=true;
       try {
-        const identity=JSON.parse(localStorage.getItem('misfinanzas:last-user')||'null');
+        const identity=lastIdentity();
         if (!identity || identity.id!==userId) throw new Error('La sesión cambió. Vuelve a abrir Créditos.');
         const entry=build();
         const key=JSON.stringify(entry);

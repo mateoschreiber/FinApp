@@ -4,11 +4,11 @@ import {renderPlanning} from './planning.mjs';
 import {renderReconciliation} from './reconciliation.mjs';
 import {openUserStore} from './offline-store.mjs';
 import {syncUser} from './sync.mjs';
-import {calculateBalances, overlayOperations, checkEditBase, setupStep, historyPage, monthlyTotals} from './view-model.mjs';
+import {calculateBalances, overlayOperations, checkEditBase, setupStep, historyPage, monthlyTotals, netWorth} from './view-model.mjs';
+import {element, lastIdentity, money, sessionKey} from './ui.mjs';
 
 const $ = id => document.getElementById(id);
 const fields = id => $(id).elements;
-const sessionKey = 'misfinanzas:last-user';
 const movementNames = {
   income:'Ingreso', expense:'Gasto', refund:'Devolución o reintegro', transfer:'Transferencia',
   payment:'Pago de tarjeta', loan_draw:'Desembolso de préstamo', loan_repayment:'Pago de capital',
@@ -18,7 +18,6 @@ const suggestions = [
   ['housing','Vivienda','expense'], ['health','Salud','expense'], ['services','Servicios','expense'],
   ['leisure','Ocio','expense'], ['salary','Salario','income'], ['other_income','Otros ingresos','income'],
 ];
-const money = n => new Intl.NumberFormat('es-PY').format(n) + ' Gs.';
 const today = () => new Intl.DateTimeFormat('en-CA', {
   timeZone:'America/Asuncion', year:'numeric', month:'2-digit', day:'2-digit',
 }).format(new Date());
@@ -40,11 +39,6 @@ function notice(message, fromSync = false) {
   $('notice').dataset.syncError = String(fromSync);
 }
 
-function lastIdentity() {
-  try { return JSON.parse(localStorage.getItem(sessionKey) || 'null'); }
-  catch { return null; }
-}
-
 function ownsSession(id) {
   return !!id && user?.id === id && lastIdentity()?.id === id;
 }
@@ -57,13 +51,6 @@ function showError(error, fromSync = false) {
       ? 'La sesión venció. Vuelve a iniciar sesión para sincronizar.'
       : error?.message || 'No se pudo completar la operación.';
   notice(message, fromSync);
-}
-
-function element(tag, text, className) {
-  const el = document.createElement(tag);
-  if (text != null) el.textContent = text;
-  if (className) el.className = className;
-  return el;
 }
 
 function button(label, run) {
@@ -166,15 +153,16 @@ function renderKpis(totals) {
   const kpis = $('kpis');
   kpis.replaceChildren();
   if (!view.accounts.length) return;
-  let net = 0, available = 0, debt = 0;
+  const net = Number(netWorth(view.accounts, totals));
+  let available = 0, debt = 0;
   for (const a of view.accounts) {
     const balance = totals.get(a.id) ?? 0;
-    net += balance;
     if (a.kind === 'card') debt += balance; else available += balance;
   }
   const month = today().slice(0, 7);
   const result = monthlyTotals(view.operations, month);
-  const monthLabel = new Intl.DateTimeFormat('es-PY', {month: 'long', year: 'numeric'}).format(new Date());
+  const monthLabel = new Intl.DateTimeFormat('es-PY', {month:'long', year:'numeric', timeZone:'America/Asuncion'})
+    .format(new Date(month + '-15T12:00:00Z'));
   const kpi = (label, value, className, detail) => {
     const card = element('div', null, 'kpi');
     card.append(element('p', label, 'label'), element('p', money(value), 'value ' + className));
@@ -183,7 +171,7 @@ function renderKpis(totals) {
   };
   kpi('Patrimonio neto', net, net >= 0 ? 'positive' : 'negative');
   kpi('Disponible', available, available >= 0 ? 'positive' : 'negative');
-  kpi('Deuda de tarjetas', debt, debt < 0 ? 'negative' : '');
+  kpi('Deuda de tarjetas', debt, debt > 0 ? 'negative' : '');
   kpi('Resultado de ' + monthLabel, Number(result.net), result.net >= 0 ? 'positive' : 'negative',
     'Ingresos ' + money(Number(result.income)) + ' · Gastos ' + money(Number(result.expense)));
 }
