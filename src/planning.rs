@@ -131,6 +131,15 @@ enum Plan {
         category_id: String,
     },
 }
+
+/// A delete that matched nothing is a 404, not a silent success.
+fn removed(conn: &Connection, sql: &str, params: impl rusqlite::Params) -> Result<(), Error> {
+    if conn.execute(sql, params)? == 0 {
+        return Err(Error::Missing);
+    }
+    Ok(())
+}
+
 fn save(conn: &Connection, u: &str, plan: Plan) -> Result<(), Error> {
     let permitted_account = |id: &str| -> Result<bool, Error> {
         Ok(!catalog::is_archived(conn,u,"account",id)? && conn.query_row("SELECT EXISTS(SELECT 1 FROM finance_accounts WHERE user_id=?1 AND id=?2 AND kind!='card')",params![u,id],|r|r.get(0))?)
@@ -183,19 +192,22 @@ fn save(conn: &Connection, u: &str, plan: Plan) -> Result<(), Error> {
             conn.execute("INSERT INTO planning_recurring VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9) ON CONFLICT(user_id,id) DO UPDATE SET name=excluded.name,account_id=excluded.account_id,category_id=excluded.category_id,amount=excluded.amount,first_month=excluded.first_month,last_month=excluded.last_month,day=excluded.day",params![u,id,name.trim(),account_id,category_id,amount,first_month,last_month,day])?;
         }
         Plan::RemoveGoal { id } => {
-            conn.execute(
+            removed(
+                conn,
                 "DELETE FROM planning_goals WHERE user_id=?1 AND id=?2",
                 params![u, id],
             )?;
         }
         Plan::RemoveRecurring { id } => {
-            conn.execute(
+            removed(
+                conn,
                 "DELETE FROM planning_recurring WHERE user_id=?1 AND id=?2",
                 params![u, id],
             )?;
         }
         Plan::RemoveBudget { month, category_id } => {
-            conn.execute(
+            removed(
+                conn,
                 "DELETE FROM planning_budgets WHERE user_id=?1 AND month=?2 AND category_id=?3",
                 params![u, month, category_id],
             )?;
@@ -342,7 +354,7 @@ pub(crate) fn report(conn: &Connection, u: &str, month: &str) -> Result<Value, E
         Ok(json!({"id":id,"name":r.get::<_,String>(1)?,"account_id":r.get::<_,String>(2)?,"category_id":r.get::<_,String>(3)?,"amount":r.get::<_,i64>(4)?,"first_month":first,"last_month":last,"day":day,"due":due,"posted":posted,"operation_id":op_id}))
     })?.collect::<Result<Vec<_>,_>>()?;
     let mut stmt=conn.prepare("SELECT p.id,p.operation_id,p.name,p.mime,length(p.content),p.digest FROM planning_receipts p JOIN finance_operations o ON o.user_id=p.user_id AND o.id=p.operation_id WHERE p.user_id=?1 AND substr(json_extract(o.data,'$.date'),1,7)=?2 AND json_extract(o.data,'$.deleted')=0 ORDER BY p.operation_id,p.id")?;
-    let receipts=stmt.query_map(params![u,month],|r|Ok(json!({"id":r.get::<_,String>(0)?,"operation_id":r.get::<_,String>(1)?,"name":r.get::<_,String>(2)?,"mime":r.get::<_,String>(3)?,"size":r.get::<_,usize>(4)?,"digest":r.get::<_,String>(5)?})))?.collect::<Result<Vec<_>,_>>()?;
+    let receipts=stmt.query_map(params![u,month],|r|Ok(json!({"id":r.get::<_,String>(0)?,"operation_id":r.get::<_,String>(1)?,"name":r.get::<_,String>(2)?,"mime":r.get::<_,String>(3)?,"size":r.get::<_,i64>(4)? as usize,"digest":r.get::<_,String>(5)?})))?.collect::<Result<Vec<_>,_>>()?;
     digest.update(serde_json::to_vec(&(&budgets, &receipts)).map_err(|_| Error::Database)?);
     let balances = finance::balances_in(conn, u, Some(&end))?;
     let mut stmt = conn.prepare("SELECT id,kind FROM finance_accounts WHERE user_id=?")?;
@@ -523,7 +535,8 @@ async fn remove_receipt(
 ) -> Result<StatusCode, Error> {
     let u = user(&s.db, &h)?;
     let conn = s.db.0.lock().map_err(|_| Error::Database)?;
-    conn.execute(
+    removed(
+        &conn,
         "DELETE FROM planning_receipts WHERE user_id=?1 AND id=?2",
         params![u, id],
     )?;

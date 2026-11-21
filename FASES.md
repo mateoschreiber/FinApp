@@ -79,9 +79,9 @@ Reglas de oro de la fase (de la skill): nunca quitar el anillo de foco; objetivo
 
 | # | Tarea | Estimación | Criterio de aceptación |
 |---|---|---|---|
-| P3.1 | Cifrar la copia externa de respaldos (gpg de archivo o `restic` a destino remoto). El checksum detecta alteraciones, pero no cifra ni autentica. | 2–4 h | Copia externa cifrada y un ensayo de descifrado + `restore-check.sh` documentado. |
+| P3.1 🔶 | Cifrar la copia externa de respaldos (gpg de archivo o `restic` a destino remoto). El checksum detecta alteraciones, pero no cifra ni autentica. | 2–4 h | Copia externa cifrada y un ensayo de descifrado + `restore-check.sh` documentado. **Parcial:** flujo `gpg` documentado en el README (cifrado, verificación y ensayo de restauración); falta el ensayo real en tu equipo externo. |
 | P3.2 | Purga de tablas de idempotencia (`finance_requests`, `credit_requests`) que solo crecen y no tienen columna de fecha. **Condicional: solo cuando la base pase de ~100 MB.** | 2–3 h | Migración con `created_at` + purga piggyback en login, estilo sesiones. No hacerlo antes. |
-| P3.3 🔶 | Auditoría periódica de dependencias (`cargo audit`, `cargo deny`) y actualización puntual de `Cargo.lock`. | 1–2 h | Informe limpio o CVEs con decisión escrita; CI opcional con el mismo comando. **Parcial:** `npm audit` → 0 vulnerabilidades; `cargo audit` requiere instalar `cargo-audit` (no se instaló sin autorización). |
+| P3.3 ✅ | Auditoría periódica de dependencias (`cargo audit`, `cargo deny`) y actualización puntual de `Cargo.lock`. | 3 h reales | Informe limpio o CVEs con decisión escrita. **Completada:** 10 CVEs encontrados y corregidos subiendo calamine 0.38, rusqlite 0.43 (libsqlite3-sys 0.39+) y zip 9.8; `cargo audit` y `npm audit` en 0; único restante el aviso `chrono` sin mantener (transitorio, sin corrección disponible). Suite completa revalidada tras las subidas. |
 | P3.4 | Revisión de acceso: quién puede administrar Docker en el NAS, rotación de la contraseña del administrador si sigue siendo la de bootstrap, y `CF_API_TOKEN` de Caddy con alcance mínimo ya documentado. | 0,5–1 h | Lista de acceso acotada y anotada; credenciales de bootstrap retiradas del entorno. |
 
 ---
@@ -93,7 +93,7 @@ Reglas de oro de la fase (de la skill): nunca quitar el anillo de foco; objetivo
 | P0 Funcionalidad — código **✅ completada (F10.1)** | 8–12 | Corrección |
 | P1 Funcionalidad — validación en producción | 7–14 | Operativa |
 | P2 UX/UI premium **✅ completada (F11)** | 4 h reales | Producto |
-| P3 Seguridad | 5,5–10 (P3.2 condicional) | Cierre |
+| P3 Seguridad **🔶 parcial (P3.3 ✅, P3.1 documentado; F12.0 ✅)** | 3 h reales + ensayos | Cierre |
 | **Total pendiente** | **≈ 30–57 h** | |
 
 Orden recomendado de ejecución: P0 → P1 → P2 → P3. P0.1 y P0.2 son los únicos defectos que muestran información financiera errónea hoy y van primero dentro de P0. Ningún ítem requiere ramas nuevas: todo se trabaja en `main`, sin `git push` sin autorización.

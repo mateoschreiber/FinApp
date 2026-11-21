@@ -100,7 +100,19 @@ Si el proxy corre en otro contenedor, `127.0.0.1` de ese contenedor no apunta al
 
 ## Respaldo y ensayo de restauración
 
-Los comprobantes se guardan dentro de SQLite y forman parte de la copia. Solo se incluyen datos ya sincronizados con el servidor; los cambios pendientes siguen en los dispositivos. Protege los respaldos como datos financieros privados y copia ambos archivos generados a otro equipo o almacenamiento. El checksum detecta alteraciones accidentales, pero no cifra ni autentica la copia.
+Los comprobantes se guardan dentro de SQLite y forman parte de la copia. Solo se incluyen datos ya sincronizados con el servidor; los cambios pendientes siguen en los dispositivos. Protege los respaldos como datos financieros privados y copia ambos archivos generados a otro equipo o almacenamiento. El checksum detecta alteraciones accidentales, pero no cifra ni autentica la copia; para eso, cifra la copia externa con `gpg` y guarda la contraseña en un gestor de contraseñas distinto del servidor:
+
+```bash
+gpg --symmetric --cipher-algo AES256 "$HOME/finapp-backups/EL_ARCHIVO.sqlite"
+```
+
+Comprueba que puedes descifrarla en el otro equipo antes de confiar en ella y borra la copia sin cifrar del destino externo:
+
+```bash
+gpg --decrypt EL_ARCHIVO.sqlite.gpg > EL_ARCHIVO.sqlite
+sha256sum -c EL_ARCHIVO.sqlite.sha256
+bash scripts/restore-check.sh EL_ARCHIVO.sqlite
+```
 
 Con el servicio `app` iniciado, en el servidor ejecuta:
 
@@ -175,6 +187,6 @@ Persistent=true
 WantedBy=timers.target
 ```
 
-Tras crear las unidades, ejecuta `sudo systemctl daemon-reload` y `sudo systemctl enable --now finapp-backup.timer`. Comprueba `systemctl list-timers finapp-backup.timer`, ejecuta una prueba con `sudo systemctl start finapp-backup.service` y revisa `journalctl -u finapp-backup.service -n 50`. `Persistent=true` recupera una ejecución perdida cuando se activa el temporizador. El script no elimina copias antiguas: establece una retención y supervisa el espacio disponible. Sin supervisión y sin copias fuera del servidor, una programación no garantiza recuperación.
+Tras crear las unidades, ejecuta `sudo systemctl daemon-reload` y `sudo systemctl enable --now finapp-backup.timer`. Comprueba `systemctl list-timers finapp-backup.timer`, ejecuta una prueba con `sudo systemctl start finapp-backup.service` y revisa `journalctl -u finapp-backup.service -n 50`. `Persistent=true` recupera una ejecución perdida cuando se activa el temporizador. El script no elimina copias antiguas: establece una retención y supervisa el espacio disponible. Sin supervisión y sin copias fuera del servidor, una programación no garantiza recuperación. Si la copia externa debe quedar cifrada, añade el paso de `gpg` de la sección anterior al final de `ExecStart` o encadena un segundo servicio que cifre y copie los archivos nuevos; ensaya el descifrado antes de depender de ello.
 
 Fuentes: [respaldo SQLite](https://www.sqlite.org/backup.html), [desafío DNS de Caddy](https://caddyserver.com/docs/automatic-https#dns-challenge) y [publicación de puertos Docker](https://docs.docker.com/reference/compose-file/services/#ports).

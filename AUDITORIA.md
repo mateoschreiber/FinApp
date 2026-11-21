@@ -603,3 +603,33 @@ Las barras y los safe-areas no se abrieron en Chrome real; corresponden a la lis
 ### Pendiente de seguridad (P3)
 
 P3.1 (cifrar la copia externa), P3.4 (revisión de accesos y rotación de bootstrap) son operativos; P3.2 (purga de tablas de idempotencia) queda condicionada a que la base pase de ~100 MB; P3.3 (cargo audit) requiere instalar `cargo-audit`, no instalado sin autorización.
+
+## F12 — Cierre de seguridad y corrección de borrados
+
+### F12.0 — Borrados inexistentes responden 404
+
+`RemoveGoal`, `RemoveRecurring`, `RemoveBudget` y el DELETE de comprobantes devolvían 204 aunque no existiera el ítem. Ahora el helper `removed()` de `src/planning.rs` comprueba las filas afectadas y devuelve `Error::Missing` (404), igual que `reconciliation.rs`. Prueba `missing_deletes_answer_404` en `tests/full_flow.rs` (4 pasadas: los tres planes y el comprobante con id fantasma, más el ciclo 204→404 de un objetivo real). Mutación con la lógica invertida: la prueba falla; revertida.
+
+### F12.1 — Auditoría de dependencias (P3.3)
+
+`cargo audit` inicial: **10 vulnerabilidades** — calamine 0.31 (OOM/panic en el parser, alta), quick-xml 0.38 (dos altas, lector XML de los XLSX subidos), libsqlite3-sys 0.35 (CVE de SQLite C, media) y 6 avisos de zip 4.6 (todos sobre `extract()` a disco, **no alcanzable**: FinApp nunca extrae, valida el tamaño en streaming y calamine lee en memoria). Corregido subiendo:
+
+| Crate | Antes | Ahora |
+|---|---|---|
+| calamine | 0.31 | 0.38 |
+| rusqlite (libsqlite3-sys) | 0.37 (0.35) | 0.43 (0.39+) |
+| zip | =4.6.0 | 9.8.1 |
+
+Únicos cambios de código: `usize` dejó de implementar `FromSql` en rusqlite 0.43 (una lectura de tamaño de comprobante pasa por `i64`) y calamine 0.38 resuelve el libro por `_rels/.rels`, que los cinco libros sintéticos de pruebas ahora incluyen (`PACKAGE_RELS`). `cargo audit` y `npm audit`: **0 vulnerabilidades**; único restante el aviso `chrono` sin mantener (transitorio, sin corrección disponible). No se añadió `cargo audit` a CI; queda como decisión pendiente si se quiere automático.
+
+### F12.2 — Copia externa cifrada (P3.1, documentación)
+
+El README documenta el flujo `gpg --symmetric` para la copia externa (cifrado, verificación del checksum y ensayo con `restore-check.sh`) y cómo encadenarlo al timer systemd. El ensayo real en el equipo externo queda a cargo del administrador.
+
+### Validación F12
+
+`cargo fmt --check` limpio, `clippy --all-targets --locked -- -D warnings` exit 0, `cargo test --locked` **141 Rust** exit 0 (140 + la nueva de borrados), `npm test` sin cambios ni reejecución necesaria (sin cambios en JS), `cargo audit` exit 0.
+
+### Pendiente tras F12
+
+F10.2 (validación en producción: despliegue con `FINAPP_VERSION`, XLSX real, Android físico, copia programada verificada, ensayo de descifrado de la copia cifrada) y P3.4 (revisión de accesos Docker y rotación de credenciales de bootstrap) son operativos. P3.2 sigue condicionada a la base por encima de ~100 MB.

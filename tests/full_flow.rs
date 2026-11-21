@@ -17,6 +17,8 @@ use tower::ServiceExt;
 
 const ORIGIN: &str = "https://finanzas.example";
 const PASSWORD: &str = "contraseña temporal sintética";
+// calamine 0.38 resolves the workbook through the package-level relationships.
+const PACKAGE_RELS: &str = r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#;
 
 async fn request(
     app: &Router,
@@ -181,6 +183,7 @@ fn workbook() -> String {
     book.push_str("</sheets></workbook>");
     rel.push_str("</Relationships>");
     for (name, text) in [
+        ("_rels/.rels", PACKAGE_RELS),
         ("[Content_Types].xml", content_types),
         ("xl/workbook.xml", &book),
         ("xl/_rels/workbook.xml.rels", &rel),
@@ -515,4 +518,86 @@ async fn financial_changes_return_reviewed_later_months_to_pending() {
     )
     .await;
     assert_eq!(after_december["reviewed"], true);
+}
+
+/// F12.0: deleting something that no longer exists answers 404, not a silent 204.
+#[tokio::test]
+async fn missing_deletes_answer_404() {
+    let db = Database::open_memory().unwrap();
+    db.bootstrap_admin("alice", PASSWORD).unwrap();
+    let router = app(db.clone(), ORIGIN.into());
+    let alice = login(&router, "alice").await;
+    for plan in [
+        json!({"kind":"remove_budget","month":"2026-11","category_id":"ghost"}),
+        json!({"kind":"remove_recurring","id":"ghost"}),
+        json!({"kind":"remove_goal","id":"ghost"}),
+    ] {
+        checked_json(
+            request(&router, Some(&alice), "POST", "/api/planning", plan).await,
+            StatusCode::NOT_FOUND,
+        )
+        .await;
+    }
+    checked_json(
+        request(
+            &router,
+            Some(&alice),
+            "DELETE",
+            "/api/receipts/ghost",
+            Value::Null,
+        )
+        .await,
+        StatusCode::NOT_FOUND,
+    )
+    .await;
+
+    // The happy path still works and the second attempt reports 404.
+    checked_json(
+        request(
+            &router,
+            Some(&alice),
+            "POST",
+            "/api/accounts",
+            json!({"id":"cash","name":"Efectivo","kind":"cash","initial_balance":0}),
+        )
+        .await,
+        StatusCode::OK,
+    )
+    .await;
+    checked_json(
+        request(
+            &router,
+            Some(&alice),
+            "POST",
+            "/api/planning",
+            json!({"kind":"goal","id":"g1","name":"Meta","account_id":"cash","target":100,"deadline":"2026-12"}),
+        )
+        .await,
+        StatusCode::NO_CONTENT,
+    )
+    .await;
+    checked_json(
+        request(
+            &router,
+            Some(&alice),
+            "POST",
+            "/api/planning",
+            json!({"kind":"remove_goal","id":"g1"}),
+        )
+        .await,
+        StatusCode::NO_CONTENT,
+    )
+    .await;
+    checked_json(
+        request(
+            &router,
+            Some(&alice),
+            "POST",
+            "/api/planning",
+            json!({"kind":"remove_goal","id":"g1"}),
+        )
+        .await,
+        StatusCode::NOT_FOUND,
+    )
+    .await;
 }

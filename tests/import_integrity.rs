@@ -14,6 +14,8 @@ use tower::ServiceExt;
 
 const ORIGIN: &str = "https://finanzas.example";
 const PASSWORD: &str = "contrasena sintetica de saldos";
+// calamine 0.38 resolves the workbook through the package-level relationships.
+const PACKAGE_RELS: &str = r#"<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>"#;
 
 struct Fixture {
     db: Database,
@@ -254,6 +256,7 @@ fn package(cuentas: &[Vec<String>], categorias: &[Vec<String>], filas: &[Vec<Str
     let options =
         zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
     for (name, content) in [
+        ("_rels/.rels", PACKAGE_RELS),
         ("[Content_Types].xml", content_types),
         ("xl/workbook.xml", book),
         ("xl/_rels/workbook.xml.rels", rel),
@@ -1834,6 +1837,7 @@ fn large_xlsx() -> String {
     }
     movimientos.push_str("</sheetData></worksheet>");
     for (name, content) in [
+        ("_rels/.rels", PACKAGE_RELS),
         ("[Content_Types].xml", content_types),
         ("xl/workbook.xml", book),
         ("xl/_rels/workbook.xml.rels", rel),
