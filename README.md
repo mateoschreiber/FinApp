@@ -110,11 +110,11 @@ bash scripts/backup.sh "$HOME/finapp-backups"
 
 El script usa `.backup` de SQLite para crear una instantánea coherente incluso con WAL, comprueba `integrity_check` y compara SHA-256 antes y después de copiarla. Publica un archivo `.sqlite` y otro `.sqlite.sha256` con el mismo nombre y muestra su ruta. Una ejecución fallida devuelve un código distinto de cero; revisa el mensaje y corrígelo. No copies solamente el archivo activo de SQLite y no uses una copia sin su correspondiente checksum.
 
-Si FinApp está definido en otro proyecto Compose, indica su directorio, archivos y servicio. En la instalación de `server1` el comando es:
+Si FinApp está definido en otro proyecto Compose, indica su directorio, archivos y servicio. Por ejemplo, con el proyecto en `/srv/finapp` y el servicio `finapp`:
 
 ```bash
-FINAPP_COMPOSE_DIR=/srv/media/homelab \
-COMPOSE_FILE=/srv/media/homelab/compose.yaml:/srv/media/homelab/finapp-cloudflare.override.yaml \
+FINAPP_COMPOSE_DIR=/srv/finapp \
+COMPOSE_FILE=/srv/finapp/compose.yaml \
 FINAPP_SERVICE=finapp bash scripts/backup.sh "$HOME/respaldos-finapp"
 ```
 
@@ -128,19 +128,19 @@ El script comprueba el checksum, restaura en un volumen Docker nuevo, verifica `
 
 Para ensayar con una imagen candidata, define `FINAPP_RESTORE_IMAGE` con su etiqueta.
 
-### Actualizar FinApp en server1
+### Actualizar FinApp
 
 Después de verificar un respaldo de la base actual y ensayar la imagen candidata en una instancia aislada, actualiza el código local y reconstruye solo FinApp:
 
 ```bash
 git -C ~/FinApp pull --ff-only
 export FINAPP_VERSION=$(git -C ~/FinApp rev-parse --short HEAD)
-cd /srv/media/homelab
-docker compose -f compose.yaml -f finapp-cloudflare.override.yaml up -d --build --no-deps finapp
+cd ~/FinApp
+docker compose up -d --build --no-deps app
 curl --fail --silent http://127.0.0.1:3000/health
 ```
 
-El comando reconstruye desde `~/FinApp` y conserva el volumen `homelab_finapp_data`. `FINAPP_VERSION` estampa el commit dentro del service worker: sin ese paso, los navegadores con la aplicación instalada conservan la versión anterior de la interfaz aunque el servidor ya tenga la nueva. Los dispositivos detectan el cambio al abrir la aplicación y muestran «Aplicar actualización»; la cola de cambios pendientes en IndexedDB se conserva. Prueba el dominio con tu sesión de Cloudflare Access y comprueba los saldos y la sincronización. Si debes volver a una versión anterior a una migración, ensaya esa imagen con el respaldo anterior y monta el volumen restaurado tras verificarlo.
+El comando reconstruye desde `~/FinApp` y conserva el volumen de datos de Compose. `FINAPP_VERSION` estampa el commit dentro del service worker: sin ese paso, los navegadores con la aplicación instalada conservan la versión anterior de la interfaz aunque el servidor ya tenga la nueva. Los dispositivos detectan el cambio al abrir la aplicación y muestran «Aplicar actualización»; la cola de cambios pendientes en IndexedDB se conserva. Prueba la aplicación desde un dispositivo y comprueba los saldos y la sincronización. Si debes volver a una versión anterior a una migración, ensaya esa imagen con el respaldo anterior y monta el volumen restaurado tras verificarlo.
 
 ### Programar una copia diaria en Ubuntu
 

@@ -1,6 +1,6 @@
 # Auditoría general de FinApp
 
-**Las 6 entregas funcionales están completas y la estabilización previa al rediseño visual terminó.** El trabajo se hace en `main`; la rama `estabilizacion-ux` ya no se usa. El contenedor de producción no se ha tocado: pendiente validar en `server1`.
+**Las 6 entregas funcionales están completas y la estabilización previa al rediseño visual terminó.** El trabajo se hace en `main`; la rama `estabilizacion-ux` ya no se usa. El contenedor de producción no se ha tocado: pendiente validar en un despliegue real.
 
 ## Estado por entrega
 
@@ -23,10 +23,10 @@
 
 ## Qué falta, en orden de prioridad
 
-1. **Validar en `server1`:** respaldo previo, `FINAPP_VERSION` en el despliegue y comprobación de la actualización PWA en un dispositivo real.
+1. **Validar en producción:** respaldo previo, `FINAPP_VERSION` en el despliegue y comprobación de la actualización PWA en un dispositivo real.
 2. **Importación real:** ensayar el XLSX real en instancia de prueba y cuadrar saldos y totales.
 3. **Android físico:** instalación PWA, uso sin conexión y rendimiento del historial (10.003 movimientos sintéticos: 1,96 MB iniciales, sincronización sin cambios de 141 bytes).
-4. **Copia automática:** confirmar una ejecución programada del respaldo y una copia recuperable fuera de `server1` (al auditar figuraban 0 ejecuciones registradas).
+4. **Copia automática:** confirmar una ejecución programada del respaldo y una copia recuperable fuera del servidor (al auditar figuraban 0 ejecuciones registradas).
 5. **Observado una vez en desarrollo:** error de fila intermitente en la importación masiva (SELECT de `import_sources`, fila ~19.614), no reproducido en 6 corridas; si reaparece, instrumentar el error SQLite que hoy se traga en `src/exchange.rs`.
 
 ## Registro de CI
@@ -543,3 +543,63 @@ Preview no persiste; confirmaciones rechazadas dejan 0 operaciones; los errores 
 - `SQLITE_BUSY` bajo escritor externo sigue produciendo 409 inmediato; es el contrato actual y no se cambió.
 - El fallo histórico de la fila ~19.614 sigue sin reproducción.
 - No se activó WAL ni se cambió `busy_timeout`; la contención con herramientas externas sigue siendo posible.
+
+## F10.1 — Correcciones funcionales de la fase 10
+
+### Defectos corregidos
+
+- **F10.1A** KPI «Patrimonio neto»: la deuda de tarjeta se sumaba como activo y «Deuda de tarjetas» se coloreaba en rojo solo sin deuda. Ahora el KPI usa `netWorth()` (`static/view-model.mjs`), que aplica la regla del servidor (saldo positivo de tarjeta = deuda, se resta). Atajo documentado en el código: la deuda de préstamos no está en la instantánea offline y no se resta.
+- **F10.1B** Importación XLSX `pago_prestamo`: la `categoria_id` no pasaba por `category_mapping`, por lo que la parte de interés usaba el id externo y la fila siempre se rechazaba («Datos inválidos…»). Ahora `loan_repayment` se resuelve como gasto esperado (`src/exchange.rs`).
+- **F10.1C** Créditos: dos `JSON.parse` de `localStorage` sin protección mostraban el `SyntaxError` crudo con un valor corrupto. Ahora usan `lastIdentity()` de `static/ui.mjs` y degradan al mensaje de sesión.
+- **F10.1D** Etiqueta de mes del KPI: se formateaba con la zona horaria del navegador; ahora usa `America/Asuncion` desde el mes ya calculado, siempre coincide con los datos.
+- **F10.1E** Endpoint muerto `/api/history` eliminado: grep previo del árbol completo sin llamadores. Borrados `src/history.rs` y su `merge` en `src/lib.rs` (−170 líneas).
+- **F10.1F** Duplicados del frontend unificados en `static/ui.mjs`: formateador de dinero (5 copias), creador de elementos (5), `field()` de credit/planning (acepta pares `[id,nombre]` y objetos), bucle de bloques de 8192 bytes (base64/hex) y lectura de identidad (3). `section()` no se unificó porque difiere (`details` vs `section`); los botones no se unificaron porque difieren en manejo de errores y clase CSS. `static/sw.js` ahora incluye `/ui.mjs` en el shell.
+
+### Pruebas incorporadas
+
+- `tests/import_integrity.rs`: `f10_loan_repayment_interest_uses_the_linked_category` — pago con interés 21 y categoría vinculada se previsualiza sin errores, se confirma, crea el capital (`loan_repayment` 200) y el gasto con la categoría interna, saldo −221, `integrity_check` ok.
+- `tests/view-model.test.mjs`: `netWorth` resta deuda de tarjeta, trata un crédito de tarjeta (saldo negativo) como activo y devuelve 0 sin cuentas.
+- `tests/credit-idempotency.test.mjs`: `corrupted localStorage degrades to the session message` — sin POST, mensaje de sesión en lugar del SyntaxError.
+
+### Mutaciones (detectadas y revertidas)
+
+| Mutación | Prueba que falló |
+|---|---|
+| `netWorth` sin invertir el signo de tarjeta | patrimonio del servidor (view-model) |
+| `lastIdentity` sin try/catch | localStorage corrupto (credit-idempotency G) |
+| (pre-corrección) `loan_repayment` sin mapeo de categoría | `f10_loan_repayment_interest_uses_the_linked_category` falló antes del fix |
+
+### Validación
+
+`cargo fmt --check` limpio, `clippy --all-targets --locked -- -D warnings` exit 0, `cargo test --locked` **140 Rust** exit 0 (41→40 lib por el módulo borrado, 38→39 import_integrity), `npm test` **64 JS** exit 0. Diff neto −100 líneas. Sin cambios en migraciones, reglas financieras ni contratos HTTP existentes.
+
+### Pendiente de F10
+
+F10.2 (validación en producción: despliegue con `FINAPP_VERSION`, XLSX real, Android físico, copia programada fuera del servidor, vigilancia del error ~19.614) es operativo y queda a cargo del administrador del despliegue.
+
+## F11 — UX/UI premium
+
+### Evaluación previa
+
+Antes de escribir código se verificó cada ítem contra el estado real de la interfaz:
+
+- **P2.1 micro-interacciones**: ya cubierto — `:active` con desplazamiento, transiciones de 120 ms, guard de `prefers-reduced-motion`, feedback de guardado por texto (`role="status"`) sin saltos de diseño. Sin cambios.
+- **P2.2 estados vacíos**: ya cubierto — cada sección vacía nombra la acción siguiente. Sin cambios.
+- **P2.4 virtualización del historial**: premisa inválida — `historyPage()` pagina a 25 filas y el listado nunca renderiza más. Ítem cerrado sin código.
+
+### Cambios aplicados
+
+- **P2.3 modo instalado**: `viewport-fit=cover` en `index.html`; `env(safe-area-inset-top)` en la barra de marca, insets laterales en `main` (móvil) e inferior en `body` (`style.css`). El contenido ya no queda bajo notch ni indicador de inicio.
+- **P2.5 gráfico por categoría**: el informe mensual reemplaza la tabla duplicada de categorías por barras HTML (`planning.mjs` + `.bars/.bar-row/.bar` en `style.css`): proporción sobre el gasto máximo, importe siempre en texto (nunca solo color), sin dependencias.
+
+### Validación
+
+`npm test` **64 JS** exit 0 (sin regresiones); `npm audit` **0 vulnerabilidades** (P3.3 parcial); sin cambios en Rust (no se reejecutó la suite completa por ausencia de cambios en `src/` y `tests/*.rs` — la última corrida completa de F10.1 quedó en 140 exit 0).
+
+### Sin verificar en navegador
+
+Las barras y los safe-areas no se abrieron en Chrome real; corresponden a la lista de F10.2 (comprobación en dispositivo) y al chequeo visual pendiente.
+
+### Pendiente de seguridad (P3)
+
+P3.1 (cifrar la copia externa), P3.4 (revisión de accesos y rotación de bootstrap) son operativos; P3.2 (purga de tablas de idempotencia) queda condicionada a que la base pase de ~100 MB; P3.3 (cargo audit) requiere instalar `cargo-audit`, no instalado sin autorización.
