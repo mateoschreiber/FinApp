@@ -77,6 +77,15 @@ Iconos SVG propios e inline (6 pestañas en `index.html`, 4 KPIs vía `icon()` e
 
 Reglas de oro de la fase (de la skill): nunca quitar el anillo de foco; objetivos táctiles ≥ 44×44 px; nunca confiar solo en el color; iconos SVG, no emoji; validar formularios junto al campo.
 
+### F14 — Rediseño de MisFinanzas
+
+- Nueva navegación lateral y barra inferior con historial, enlaces a secciones y acceso a cambios locales. Renovación del acceso, Resumen, registro de movimientos, Créditos, Planificación, Configuración, importación y conciliación.
+- Tipografía Source Serif 4 e IBM Plex Sans e ilustración optimizada, servidas desde la propia aplicación e incluidas en la caché offline. Los importes del Resumen conservan la precisión entera hasta su presentación.
+- Chromium local con datos sintéticos. Se verificaron cinco anchos entre 360 y 1440 px, modo oscuro, movimiento reducido y actualización de F13 a F14 con un movimiento pendiente que después se sincronizó. También se probaron el alta, la edición y el borrado, los rechazos y conflictos simulados, la importación XLSX con diferencias y la conciliación CSV.
+- Con 10.000 movimientos, ambas versiones muestran 25 filas por página. En una corrida local, el CLS del acceso fue 0,000 en F13 y 0,014 en F14. El del Resumen fue 0,003 en ambas versiones.
+- La instalación y el teclado en un Android físico quedan pendientes de un dispositivo conectado.
+- El acceso pasó a ser una pantalla propia con una composición distinta en escritorio y móvil, formulario con estado de envío y error, y opción de mostrar la contraseña. El panel principal comparte la misma tipografía, paleta y controles, con una tabla de movimientos más fácil de recorrer.
+
 ### P3 — Seguridad (5,5–10 h, parcialmente condicional) — al final por decisión del usuario
 
 > Estado real: la base ya está endurecida (CSP estricta, cookies `__Host-` HttpOnly, control de `Origin` en mutaciones, Argon2, rate-limit de login, sin secretos en el código). Nada de lo que sigue es urgente; son cierres de ciclo.

@@ -4,8 +4,8 @@ import {element as node, money as formatMoney, field, chunkedText} from './ui.mj
 const byId = items => new Map(items.map(item => [item.id, item.name]));
 const kinds = {income:'Ingreso', expense:'Gasto', payment:'Pago de tarjeta', transfer:'Transferencia', refund:'Devolución'};
 function section(root, title) {
-  const el=node('section');
-  el.append(node('h3',title));
+  const el=node('section',null,'workspace-panel');
+  el.append(node('h2',title));
   root.append(el);
   return el;
 }
@@ -18,7 +18,11 @@ function action(label, callback) {
 function table(root, headers, rows) {
   if (!rows.length) return;
   const t=node('table'), head=node('thead'), tr=node('tr'), body=node('tbody');
-  for (const title of headers) tr.append(node('th',title));
+  for (const title of headers) {
+    const header=node('th',title);
+    header.scope='col';
+    tr.append(header);
+  }
   head.append(tr);
   for (const row of rows) {
     const line=node('tr');
@@ -46,11 +50,11 @@ function hexOf(buffer) {
   return chunkedText(new Uint8Array(buffer), chunk=>Array.from(chunk,v=>chars[v]).join(''));
 }
 export async function renderPlanning(container, {api, getView, today, isCurrent, synchronize}) {
-  const shell=node('div'), heading=node('h2','Planificación e informes'), controls=node('div'), body=node('div');
+  const shell=node('div'), controls=node('div',null,'report-controls'), body=node('div',null,'report-panels');
   const month=field(controls,'Mes','month','month',{value:today.slice(0,7)});
   const status=node('p');
   status.setAttribute('role','status');
-  shell.append(heading,controls,status,body); container.replaceChildren(shell);
+  shell.append(controls,status,body); container.replaceChildren(shell);
   let generation=0;
   const live=()=>isCurrent() && shell.parentNode===container;
   const error=e=>{if(live()) status.textContent=e.status===409?'Los datos cambiaron. Actualiza el informe y vuelve a revisarlo.':(e.message || 'No se pudo completar la solicitud.');};
@@ -76,20 +80,25 @@ export async function renderPlanning(container, {api, getView, today, isCurrent,
     const save=v=>run(()=>api('/api/planning','POST',v));
     const removePlan=(kind,id)=>action('Quitar',()=>{if(confirm('¿Quitar esta planificación?'))save({kind,id});});
     const totals=section(body,'Resultado del mes');
-    table(totals,['Ingresos','Gastos netos','Resultado','Flujo de efectivo'],[
-      [report.income,report.expense,report.net,report.cash_flow].map(formatMoney),
-    ]);
+    totals.classList.add('report-overview');
+    const figures=node('dl',null,'report-figures');
+    for (const [label,amount] of [['Resultado',report.net],['Ingresos',report.income],['Gastos netos',report.expense],['Flujo de efectivo',report.cash_flow]]) {
+      const figure=node('div');
+      figure.append(node('dt',label),node('dd',formatMoney(amount)));
+      figures.append(figure);
+    }
+    totals.append(figures);
     totals.append(node('p','Patrimonio al cierre: '+formatMoney(report.net_worth)+'. Capital pendiente de préstamos: '+formatMoney(report.loan_debt)+'.'));
     if ([report.loan_principal,report.loan_interest,report.loan_fees].some(v => v !== '0')) {
       table(totals,['Capital pagado','Intereses pagados','Comisiones'],[[report.loan_principal,report.loan_interest,report.loan_fees].map(formatMoney)]);
     }
-    totals.append(node('p',report.reviewed?'Mes revisado.':'Mes pendiente de revisión.'));
+    totals.append(node('p',report.reviewed?'Mes revisado':'Mes pendiente de revisión','status-label'));
     if(!report.reviewed) totals.append(action('Marcar mes como revisado',()=>run(()=>api('/api/planning/month/'+report.month,'POST',{digest:report.digest}))));
     table(totals,['Cuenta','Gasto neto'],Object.entries(report.accounts).map(([id,amount])=>[accounts.get(id)||id,formatMoney(amount)]));
     // Bars instead of a second table: the same numbers, readable at a glance.
     const perCategory=Object.entries(report.categories)
       .map(([id,amount])=>({name:categories.get(id)||id,amount:BigInt(amount)}))
-      .sort((a,b)=>b.amount-a.amount);
+      .sort((a,b)=>a.amount === b.amount ? 0 : a.amount > b.amount ? -1 : 1);
     if (perCategory.length) {
       const max=perCategory[0].amount;
       const chart=node('div',null,'bars');

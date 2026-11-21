@@ -294,6 +294,54 @@ async fn mutation_rejects_other_origins() {
 }
 
 #[tokio::test]
+async fn local_login_accepts_loopback_aliases_only_on_the_same_address_and_port() {
+    let db = Database::open_memory().unwrap();
+    db.bootstrap_admin("admin", "password-1234").unwrap();
+    let app = app(db, "http://localhost:3000".to_owned());
+    for (origin, host, expected) in [
+        ("http://localhost:3000", "localhost:3000", StatusCode::OK),
+        ("http://127.0.0.1:3000", "127.0.0.1:3000", StatusCode::OK),
+        ("http://[::1]:3000", "[::1]:3000", StatusCode::OK),
+        (
+            "http://127.0.0.1:3000",
+            "localhost:3000",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "http://127.0.0.1:3001",
+            "127.0.0.1:3001",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "http://192.0.2.1:3000",
+            "192.0.2.1:3000",
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "https://127.0.0.1:3000",
+            "127.0.0.1:3000",
+            StatusCode::FORBIDDEN,
+        ),
+    ] {
+        let req = Request::builder()
+            .method("POST")
+            .uri("/api/login")
+            .header("content-type", "application/json")
+            .header("origin", origin)
+            .header("host", host)
+            .body(Body::from(
+                r#"{"username":"admin","password":"password-1234"}"#,
+            ))
+            .unwrap();
+        assert_eq!(
+            app.clone().oneshot(req).await.unwrap().status(),
+            expected,
+            "{origin} with Host {host}",
+        );
+    }
+}
+
+#[tokio::test]
 async fn mutation_rejects_missing_or_null_origin_and_non_json_content() {
     let db = Database::open_memory().unwrap();
     db.bootstrap_admin("admin", "password-1234").unwrap();

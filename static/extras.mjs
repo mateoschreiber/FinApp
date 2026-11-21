@@ -20,9 +20,9 @@ export function renderData(container, {api, getView, today, synchronize, isCurre
   const content = element('div');
   container.replaceChildren(content);
   const live = () => content.parentNode === container && isCurrent();
-  const importSection = element('section');
+  const importSection = element('section', null, 'workspace-panel');
   const form = element('form');
-  const result = element('div');
+  const result = element('div', null, 'import-preview');
   const status = element('p');
   status.setAttribute('role', 'status');
   const fileLabel = element('label', 'Libro XLSX de Google Sheets (hasta 5 MiB)');
@@ -38,7 +38,7 @@ export function renderData(container, {api, getView, today, synchronize, isCurre
   cutoffLabel.prepend(cutoff);
   const preview = element('button', 'Ver vista previa');
   form.append(fileLabel, cutoffLabel, preview);
-  importSection.append(element('h3', 'Importar cuentas, categorías y movimientos'), form, status, result);
+  importSection.append(element('h2', 'Importar cuentas, categorías y movimientos'), form, status, result);
   content.append(importSection);
   let mapping = Object.create(null);
   let categoryMapping = Object.create(null);
@@ -64,7 +64,7 @@ export function renderData(container, {api, getView, today, synchronize, isCurre
   }
 
   function show(report) {
-    result.replaceChildren();
+    result.replaceChildren(element('h3', 'Vista previa de importación'));
     result.append(element('p', report.added + ' filas para importar · ' + report.duplicates + ' ya importadas · ' + report.skipped + ' omitidas'));
     const existing = getView()?.accounts || [];
     if (report.accounts.length) {
@@ -262,7 +262,7 @@ export function renderData(container, {api, getView, today, synchronize, isCurre
   });
   cutoff.addEventListener('change', invalidate);
 
-  const exports = element('section');
+  const exports = element('section', null, 'workspace-panel');
   const actions = element('div');
   actions.className = 'actions';
   const monthLabel = element('label', 'Mes del informe');
@@ -295,6 +295,6 @@ export function renderData(container, {api, getView, today, synchronize, isCurre
     });
     actions.append(button);
   }
-  exports.append(element('h3','Exportar'), monthLabel, actions, exportStatus);
+  exports.append(element('h2','Exportar'), monthLabel, actions, exportStatus);
   content.append(exports);
 }

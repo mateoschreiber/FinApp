@@ -12,6 +12,8 @@ Aplicación de finanzas personales con servidor Rust, SQLite y una interfaz web 
 
 La PWA conserva los movimientos pendientes en el navegador. Si un movimiento se rechaza o entra en conflicto, revisa **Cambios locales** en el resumen. Tras cambiar de dispositivo, sincroniza para descargar las operaciones registradas.
 
+En pantallas pequeñas, la barra inferior reúne Resumen, Nuevo, Créditos, Planificación y Más. En **Más** están Configuración e Importar y exportar. **Ver cambios locales** aparece cuando hay movimientos que requieren sincronización o revisión. El **Saldo neto de cuentas y tarjetas** del Resumen incluye solo esas cuentas. Consulta el patrimonio con préstamos en **Planificación**.
+
 Para trabajar sin conexión, primero inicia sesión y sincroniza en cada dispositivo. La aplicación conserva los movimientos localmente y reintenta mientras está abierta; el botón «Sincronizar ahora» permite volver a intentarlo. El navegador debe admitir IndexedDB, service workers y Web Locks. Si deniega almacenamiento persistente, puede eliminar datos locales bajo presión de almacenamiento: sincroniza con frecuencia. Cerrar sesión requiere conexión y confirma antes de descartar cambios pendientes.
 
 ## Despliegue local con Docker
@@ -39,11 +41,11 @@ Elige el nombre que usarás, por ejemplo `finanzas.tudominio.com`, y crea un arc
 FINAPP_ORIGIN=https://finanzas.tudominio.com
 ```
 
-La dirección debe coincidir exactamente con la del navegador, incluyendo el puerto si no es el predeterminado y sin barra final. Compose usa este archivo cada vez que ejecutas sus comandos; el archivo está excluido de Git. Si la misma variable existe en tu terminal, tiene prioridad sobre `.env`.
+Para HTTPS, la dirección debe coincidir exactamente con la del navegador, incluyendo el puerto si no es el predeterminado y sin barra final. Compose usa este archivo cada vez que ejecutas sus comandos; el archivo está excluido de Git. Si la misma variable existe en tu terminal, tiene prioridad sobre `.env`.
 
 Para probar solo en este equipo puedes usar `FINAPP_ORIGIN=http://localhost:3000`. El servidor solo acepta `http://` para `localhost`, `127.0.0.1` y `[::1]`; cualquier otra dirección HTTP (IP de la red local, IP pública o dominio) se rechaza al arrancar. El origen debe escribirse como lo envía el navegador: en minúsculas, sin ruta, sin credenciales, sin fragmento y sin puerto por defecto (`:80` o `:443`).
 
-Con HTTP, la cookie de sesión lleva `Secure`. Según MDN, los navegadores solo la envían sobre HTTP en `localhost`, y Safari no admite esa excepción. Verificado en Chrome: login, cookie `HttpOnly` no legible desde JavaScript y `/api/me` autenticado. No verificado en Firefox. En Safari, usa HTTPS.
+Con un origen HTTP local, puedes usar `localhost` o `127.0.0.1` en el mismo puerto. `[::1]` también se admite si el servicio escucha en IPv6. Cada dirección mantiene su propia sesión y datos sin conexión en el navegador. Usa siempre la misma si ya tienes cambios pendientes. La cookie de sesión conserva `Secure` y `HttpOnly`. Para navegadores que no admitan cookies seguras sobre HTTP local, usa HTTPS.
 
 En la primera ejecución crea el administrador. El nombre es un ejemplo y la contraseña debe tener al menos 12 caracteres. Bash solicita la contraseña sin mostrarla en pantalla:
 

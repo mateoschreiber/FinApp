@@ -91,11 +91,26 @@ async function api(path, method = 'GET', data = null, format = 'json') {
   return format === 'blob' ? response.blob() : response.json();
 }
 
-function tab(name) {
+const sections = ['summary', 'entry', 'settings', 'credit', 'planning', 'exchange'];
+const sectionFromHash = () => sections.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'summary';
+
+function showMore(open) {
+  $('more-menu').hidden = !open;
+  $('more-toggle').setAttribute('aria-expanded', String(open));
+}
+
+function tab(name, {navigate = true, focus = true} = {}) {
+  if (navigate && sectionFromHash() !== name) history.pushState(null, '', '#' + name);
   activeTab = name;
   const generation = ++tabGeneration;
   for (const view of document.querySelectorAll('[data-view]')) view.hidden = view.id !== name;
-  for (const b of document.querySelectorAll('[data-tab]')) b.setAttribute('aria-pressed', b.dataset.tab === name);
+  for (const link of document.querySelectorAll('[data-tab]')) {
+    if (link.dataset.tab === name) link.setAttribute('aria-current', 'page');
+    else link.removeAttribute('aria-current');
+  }
+  $('more-toggle').classList.toggle('current', ['settings','exchange'].includes(name));
+  showMore(false);
+  if (focus) $(name).querySelector('h1')?.focus();
   if (!['credit','planning','exchange'].includes(name) || !user) return;
   const userId = user.id;
   const isCurrent = () => ownsSession(userId) && generation === tabGeneration;
@@ -113,8 +128,8 @@ function tab(name) {
     $(name).prepend(status);
     return;
   }
-  if (name === 'credit') renderCredit($(name), context).catch(showError);
-  if (name === 'planning') renderPlanning($(name), context).catch(showError);
+  if (name === 'credit') renderCredit($('credit-content'), context).catch(showError);
+  if (name === 'planning') renderPlanning($('planning-content'), context).catch(showError);
   if (name === 'exchange') {
     renderData($('data-tools'), context);
     renderReconciliation($('reconciliation'), context);
@@ -138,6 +153,7 @@ async function render() {
   const rejected = queue.filter(item => item.status === 'rejected').length;
   const conflicts = queue.filter(item => item.status === 'conflict').length;
   const waiting = queue.length - rejected - conflicts;
+  $('local-changes').hidden = !queue.length;
   $('sync-status').textContent = queue.length
     ? [waiting && waiting + ' pendientes', rejected && rejected + ' rechazados', conflicts && conflicts + ' en conflicto'].filter(Boolean).join(' · ')
     : 'Sin cambios pendientes.';
@@ -146,17 +162,17 @@ async function render() {
   renderHistory();
   renderQueue();
   fillSelectors();
-  if (first && ['credit','planning','exchange'].includes(activeTab)) tab(activeTab);
+  if (first && ['credit','planning','exchange'].includes(activeTab)) tab(activeTab,{navigate:false,focus:false});
 }
 
 function renderKpis(totals) {
   const kpis = $('kpis');
   kpis.replaceChildren();
   if (!view.accounts.length) return;
-  const net = Number(netWorth(view.accounts, totals));
-  let available = 0, debt = 0;
+  const net = netWorth(view.accounts, totals);
+  let available = 0n, debt = 0n;
   for (const a of view.accounts) {
-    const balance = totals.get(a.id) ?? 0;
+    const balance = BigInt(totals.get(a.id) ?? 0);
     if (a.kind === 'card') debt += balance; else available += balance;
   }
   const month = today().slice(0, 7);
@@ -171,11 +187,11 @@ function renderKpis(totals) {
     if (detail) card.append(element('p', detail, 'detail'));
     kpis.append(card);
   };
-  kpi('Patrimonio neto', net, net >= 0 ? 'positive' : 'negative', null, 'trend');
-  kpi('Disponible', available, available >= 0 ? 'positive' : 'negative', null, 'cash');
+  kpi('Saldo en cuentas', available, available >= 0 ? 'positive' : 'negative', null, 'cash');
+  kpi('Saldo neto de cuentas y tarjetas', net, net >= 0 ? 'positive' : 'negative', 'El patrimonio con préstamos está en Planificación.', 'trend');
   kpi('Deuda de tarjetas', debt, debt > 0 ? 'negative' : '', null, 'card');
-  kpi('Resultado de ' + monthLabel, Number(result.net), result.net >= 0 ? 'positive' : 'negative',
-    'Ingresos ' + money(Number(result.income)) + ' · Gastos ' + money(Number(result.expense)), 'bars');
+  kpi('Resultado de ' + monthLabel, result.net, result.net >= 0 ? 'positive' : 'negative',
+    'Ingresos ' + money(result.income) + ' · Gastos ' + money(result.expense), 'bars');
 }
 
 function renderBalances() {
@@ -188,18 +204,21 @@ function renderBalances() {
     const totals = calculateBalances(view.accounts, view.operations);
     renderKpis(totals);
     for (const a of view.accounts) {
-      const card = element('article',null,'card');
+      const card = element('article',null,'card balance-card');
       const balance = totals.get(a.id);
-      const label = (a.kind === 'card' ? 'Deuda ' : 'Saldo ') + money(balance);
-      const color = balance < 0 || a.kind === 'card' ? 'negative' : 'positive';
-      card.append(element('strong', a.name), element('p', label, 'amount ' + color));
+      const isCard = a.kind === 'card';
+      const color = (isCard ? balance > 0 : balance < 0) ? 'negative' : '';
+      const type = {bank:'Banco',cash:'Efectivo',wallet:'Billetera',card:'Tarjeta de crédito'}[a.kind];
+      card.append(element('p',type,'balance-kind'), element('strong',a.name),
+        element('p',money(balance),'amount ' + color));
+      if (isCard) card.append(element('p',balance < 0 ? 'Saldo a favor' : 'Deuda de tarjeta','muted'));
       if (a.archived) card.append(element('p','Archivada','muted'));
       balances.append(card);
     }
   } catch (error) { $('balance-note').textContent = error.message; }
   const step = setupStep(view);
   if (step === 'ready') return;
-  const prompt = element('div',null,'card');
+  const prompt = element('div',null,'card setup-card');
   if (step === 'account') {
     prompt.append(element('p','Crea una cuenta para registrar tus primeros movimientos.'),
       button('Crear mi primera cuenta', () => followSetup('account-form')));
@@ -322,20 +341,23 @@ function renderHistory() {
   const signClass = op => op.kind === 'income' || op.kind === 'refund' || op.kind === 'loan_draw' ? 'positive'
     : op.kind === 'transfer' ? '' : 'negative';
   for (const op of page.rows) {
-    const row = element('article',null,'row');
+    const row = element('article',null,'row movement-row');
     const account = accounts.get(op.account_id);
     const destination = accounts.get(op.destination_account_id || op.card_account_id);
-    row.append(element('strong',(movementNames[op.kind] || op.kind)+' · '+money(op.amount),'amount '+signClass(op)));
-    const details = [op.date,[account?.name,destination?.name].filter(Boolean).join(' → '),categories.get(op.category_id),op.description];
-    row.append(element('p',details.filter(Boolean).join(' · ')));
+    const kind = movementNames[op.kind] || op.kind;
+    const description = element('div',null,'movement-description');
+    description.append(element('strong',op.description || kind));
+    const details = [op.description && kind,op.date,[account?.name,destination?.name].filter(Boolean).join(' → '),categories.get(op.category_id)];
+    description.append(element('p',details.filter(Boolean).join(' · '),'muted'));
     if (op.original_operation_id) {
       const expense = original.get(op.original_operation_id);
-      row.append(element('p','Gasto original · '+[expense?.date,expense?.description].filter(Boolean).join(' · '),'muted'));
+      description.append(element('p','Gasto original · '+[expense?.date,expense?.description].filter(Boolean).join(' · '),'muted'));
     }
     if ([account,destination].some(a => a?.cutoff_date && op.date < a.cutoff_date)) {
-      row.append(element('p','Movimiento anterior a la fecha de corte de una cuenta.','muted'));
+      description.append(element('p','Movimiento anterior a la fecha de corte de una cuenta.','muted'));
     }
-    if (op.pending) row.append(element('p',op.conflict ? 'Conflicto por resolver' : 'Pendiente de sincronización','muted'));
+    if (op.pending) description.append(element('p',op.conflict ? 'Conflicto por resolver' : 'Pendiente de sincronización','status-label'));
+    row.append(description,element('strong',money(op.amount),'amount '+signClass(op)));
     if (!op.conflict && !op.id.startsWith('loan:') && !op.kind.startsWith('loan_')
       && !queue.some(q => q.recordId === op.id && q.status === 'rejected')) {
       const actions = element('div',null,'row-actions');
@@ -345,7 +367,7 @@ function renderHistory() {
     list.append(row);
   }
   if (!page.total) list.append(element('p',view.operations.some(op => !op.deleted)
-    ? 'Sin movimientos para estos filtros.' : 'Todavía no hay movimientos.','muted'));
+    ? 'Sin movimientos para estos filtros.' : 'Todavía no hay movimientos.','muted empty-history'));
 }
 
 function describe(op) {
@@ -507,6 +529,7 @@ async function remove(op) {
 function resetEntry() {
   editBase = null;
   $('movement-form').reset();
+  fields('movement-form').id.value = '';
   fields('movement-form').date.value = today();
   $('entry-heading').textContent = 'Nuevo movimiento';
   $('cancel-edit').hidden = true;
@@ -557,7 +580,7 @@ async function openSession(identity) {
   $('app-view').hidden = false;
   $('relogin').hidden = false;
   resetEntry();
-  tab('summary');
+  tab(sectionFromHash(),{navigate:false});
   await render();
   await synchronize();
 }
@@ -567,7 +590,9 @@ function clearSession() {
   store?.close();
   user = store = view = confirmed = null;
   queue = [];
-  for (const id of ['credit','planning','data-tools','reconciliation','balances','movements','pending-list','conflicts','account-list','category-list']) $(id).replaceChildren();
+  for (const id of ['credit-content','planning-content','data-tools','reconciliation','balances','movements','pending-list','conflicts','account-list','category-list']) $(id).replaceChildren();
+  $('local-changes').hidden = true;
+  $('sync-status').textContent = '';
   $('history-filter').reset();
   resetCatalog('account-form');
   resetCatalog('category-form');
@@ -579,23 +604,60 @@ function clearSession() {
   resetEntry();
 }
 
-function bindForm(id, run) {
+function bindForm(id, run, {onError = showError, onBusy} = {}) {
   const form = $(id);
+  if (id === 'movement-form' || id === 'login-form') {
+    const clear = field => {
+      if (!field.hasAttribute('aria-errormessage')) return;
+      $(field.getAttribute('aria-errormessage'))?.remove();
+      field.removeAttribute('aria-errormessage');
+      field.removeAttribute('aria-invalid');
+    };
+    form.addEventListener('invalid',({target:field}) => {
+      clear(field);
+      const error = element('span',field.validationMessage,'field-error');
+      error.id = id + '-' + field.name + '-error';
+      field.after(error);
+      field.setAttribute('aria-invalid','true');
+      field.setAttribute('aria-errormessage',error.id);
+    },true);
+    form.addEventListener('input',({target:field}) => clear(field));
+    form.addEventListener('reset',() => Array.from(form.elements).forEach(clear));
+  }
   form.addEventListener('submit', async event => {
     event.preventDefault();
     const submit = form.querySelector('button:not([type="button"])');
     if (form.dataset.busy) return;
     form.dataset.busy = 'true';
     submit.disabled = true;
+    onBusy?.(true);
     try { await run(new FormData(form),form); }
-    catch (error) { showError(error); }
+    catch (error) { onError(error); }
     finally {
       delete form.dataset.busy;
       submit.disabled = false;
+      onBusy?.(false);
       if (id === 'movement-form') fillSelectors();
     }
   });
 }
+
+const loginForm = $('login-form');
+const loginPassword = $('login-password');
+const togglePassword = $('toggle-password');
+
+function showPassword(visible) {
+  loginPassword.type = visible ? 'text' : 'password';
+  togglePassword.textContent = visible ? 'Ocultar' : 'Mostrar';
+  togglePassword.setAttribute('aria-label',visible ? 'Ocultar contraseña' : 'Mostrar contraseña');
+}
+
+togglePassword.addEventListener('click',() => showPassword(loginPassword.type === 'password'));
+loginForm.addEventListener('input',() => {$('login-error').textContent = '';});
+loginForm.addEventListener('reset',() => {
+  showPassword(false);
+  $('login-error').textContent = '';
+});
 
 bindForm('login-form',async data => {
   const credentials = Object.fromEntries(data);
@@ -609,8 +671,25 @@ bindForm('login-form',async data => {
   else if (identity.id === user.id) {
     $('login-view').hidden = true;
     $('app-view').hidden = false;
+    $(activeTab).querySelector('h1')?.focus();
     await synchronize();
   }
+},{
+  onError(error) {
+    $('login-error').textContent = error instanceof TypeError
+      ? 'No se pudo conectar. Revisa tu conexión y vuelve a intentarlo.'
+      : error.status === 401
+        ? 'El usuario o la contraseña no coinciden.'
+        : error.status === 429
+          ? 'Hubo demasiados intentos. Espera un minuto y vuelve a intentarlo.'
+          : error.message || 'No se pudo iniciar sesión. Vuelve a intentarlo.';
+  },
+  onBusy(busy) {
+    if (busy) $('login-error').textContent = '';
+    $('login-submit').textContent = busy ? 'Entrando…' : 'Entrar';
+    $('login-progress').textContent = busy ? 'Iniciando sesión…' : '';
+    $('cancel-login').disabled = busy;
+  },
 });
 $('relogin').addEventListener('click',() => {
   $('login-view').hidden = false;
@@ -623,6 +702,7 @@ $('cancel-login').addEventListener('click',() => {
   $('login-view').hidden = true;
   $('app-view').hidden = false;
   $('login-form').reset();
+  $('relogin').focus();
 });
 $('logout').addEventListener('click',async () => {
   try {
@@ -641,11 +721,29 @@ $('logout').addEventListener('click',async () => {
       localStorage.removeItem(sessionKey);
       clearSession();
       notice('');
+      $('login-username').focus();
     });
   } catch (error) { showError(error); }
 });
 
-document.querySelectorAll('[data-tab]').forEach(b => b.addEventListener('click',() => tab(b.dataset.tab)));
+document.querySelectorAll('[data-tab]').forEach(link => link.addEventListener('click',event => {
+  if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  tab(link.dataset.tab);
+}));
+$('more-toggle').addEventListener('click',() => showMore($('more-menu').hidden));
+document.addEventListener('click',event => {
+  if (!event.target.closest('#more-menu, #more-toggle')) showMore(false);
+});
+document.addEventListener('keydown',event => {
+  if (event.key === 'Escape' && !$('more-menu').hidden) {
+    showMore(false);
+    $('more-toggle').focus();
+  }
+});
+window.addEventListener('hashchange', () => {
+  if (user) tab(sectionFromHash(),{navigate:false});
+});
 for (const name of ['kind','account_id']) fields('movement-form')[name].addEventListener('change',fillSelectors);
 for (const name of ['date','destination_account_id','card_account_id']) fields('movement-form')[name].addEventListener('change',cutoffHint);
 $('cancel-edit').addEventListener('click',() => {resetEntry(); tab('summary');});
@@ -743,6 +841,10 @@ $('history-filter').addEventListener('input',() => {currentPage=1; renderHistory
 $('previous-page').addEventListener('click',() => {currentPage--; renderHistory();});
 $('next-page').addEventListener('click',() => {currentPage++; renderHistory();});
 $('retry-sync').addEventListener('click',() => synchronize().catch(showError));
+$('local-changes').addEventListener('click',() => {
+  tab('summary',{focus:false});
+  ($('pending-title').hidden ? $('conflicts-title') : $('pending-title')).focus();
+});
 $('quick-entry').addEventListener('click',() => tab('entry'));
 window.addEventListener('online',() => synchronize().catch(showError));
 window.addEventListener('offline',() => {$('connection').textContent='Sin conexión';});

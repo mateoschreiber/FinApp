@@ -110,7 +110,9 @@ export async function renderCredit(container, ctx) {
   const {api, view, today, userId, synchronize}=ctx;
   const token={};
   renderToken.set(container,token);
-  container.replaceChildren(el('h2','Tarjetas y préstamos'),el('p','Cargando créditos…'));
+  const loading=el('p','Cargando créditos…');
+  loading.setAttribute('role','status');
+  container.replaceChildren(loading);
   const current=()=>renderToken.get(container)===token && (!ctx.isCurrent || ctx.isCurrent());
   let book;
   try { book=await api('/api/credit'); }
@@ -176,7 +178,11 @@ export async function renderCredit(container, ctx) {
       } finally { button.disabled=false; }
     });
   }
-  const statement=section(container,'Resumen de tarjeta');
+  const cardsPanel=el('section',null,'workspace-panel');
+  cardsPanel.append(el('h2','Tarjetas y vencimientos'));
+  container.append(cardsPanel);
+  const statement=section(cardsPanel,'Resumen de tarjeta');
+  statement.open=true;
   statement.open=true;
   if (view.operations.some(o=>o.pending || o.conflict)) statement.append(el('p','Sincroniza los cambios pendientes para incluirlos en el resumen.'));
   if (cards.length) {
@@ -211,7 +217,7 @@ export async function renderCredit(container, ctx) {
     }
     month.onchange=payment.onchange=assignment;assignment();end(f);
   }
-  const purchases=section(container,'Compras en cuotas');
+  const purchases=section(cardsPanel,'Compras en cuotas');
   if (availableCards.length && expenses.length) {
     const f=form(purchases,'Registrar compra',v=>({kind:'purchase',name:v.name,account_id:v.account_id,category_id:v.category_id,amount:Number(v.amount),date:v.date,first_due:v.first_due,periods:Number(v.periods)}));
     field(f,'Descripción de la compra','name','text',{maxLength:160});
@@ -231,7 +237,10 @@ export async function renderCredit(container, ctx) {
       panel.append(el('p','Para corregir los datos de la compra, anulá y volvé a registrarla.'));
     }
   }
-  const newLoan=section(container,'Registrar préstamo y desembolso');
+  const loansPanel=el('section',null,'workspace-panel');
+  loansPanel.append(el('h2','Cartera de préstamos'));
+  container.append(loansPanel);
+  const newLoan=section(loansPanel,'Registrar préstamo y desembolso');
   if (accounts.length) {
     const f=form(newLoan,'Registrar desembolso',v=>({kind:'loan',name:v.name,account_id:v.account_id,principal:Number(v.principal),date:v.date,first_due:v.first_due,periods:Number(v.periods),method:v.method,rate_bps:Math.round(Number(v.rate)*100),rate_type:v.rate_type}));
     field(f,'Nombre o entidad','name','text',{maxLength:160});
@@ -244,10 +253,9 @@ export async function renderCredit(container, ctx) {
     field(f,'Tasa anual (%)','rate','number',{min:0,max:1000,step:0.01,value:0});
     field(f,'Tipo de tasa anual','rate_type','select',{items:[['nominal','Nominal'],['effective','Efectiva']]});end(f);
   } else newLoan.append(el('p','Crea una cuenta de efectivo, banco o billetera para registrar el desembolso.'));
-  container.append(el('h3','Mis préstamos'));
-  if (!book.loans.length) container.append(el('p','Todavía no hay préstamos.'));
+  if (!book.loans.length) loansPanel.append(el('p','Todavía no hay préstamos.'));
   for(const loan of book.loans) {
-    const panel=section(container,loan.name+' · Capital pendiente '+money(loan.outstanding));
+    const panel=section(loansPanel,loan.name+' · Capital pendiente '+money(loan.outstanding));
     panel.append(el('p','Desembolso '+loan.draw_date+' · '+money(loan.principal)));
     scheduleList(section(panel,'Proyección mensual original'),loan.installments,loan);
     if(loan.payments.length) {

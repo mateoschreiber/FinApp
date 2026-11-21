@@ -11,7 +11,7 @@ use axum::{
     Router,
     body::Body,
     extract::State,
-    http::{Method, Request, StatusCode, header},
+    http::{Method, Request, StatusCode, Uri, header},
     middleware::{self, Next},
     response::{IntoResponse, Response},
     routing::{get, post},
@@ -35,11 +35,17 @@ async fn protect_mutations(
     next: Next,
 ) -> Response {
     if request.method() != Method::GET && request.method() != Method::HEAD {
+        let authority = request.uri().authority().map(|a| a.as_str()).or_else(|| {
+            request
+                .headers()
+                .get(header::HOST)
+                .and_then(|h| h.to_str().ok())
+        });
         let origin_matches = request
             .headers()
             .get(header::ORIGIN)
             .and_then(|h| h.to_str().ok())
-            == Some(state.origin.as_ref());
+            .is_some_and(|origin| origin_matches(origin, &state.origin, authority));
         let json = request
             .headers()
             .get(header::CONTENT_TYPE)
@@ -54,6 +60,26 @@ async fn protect_mutations(
         }
     }
     next.run(request).await
+}
+
+fn origin_matches(origin: &str, configured: &str, authority: Option<&str>) -> bool {
+    if origin == configured {
+        return true;
+    }
+    // A local browser can address the same HTTP listener by any loopback alias.
+    // Require the actual request authority to match the browser's Origin.
+    fn loopback_http(origin: &str) -> Option<Uri> {
+        if !origin.starts_with("http://") || !valid_origin(origin) {
+            return None;
+        }
+        origin.parse().ok()
+    }
+    let (Some(origin), Some(configured)) = (loopback_http(origin), loopback_http(configured))
+    else {
+        return false;
+    };
+    origin.port_u16() == configured.port_u16()
+        && origin.authority().map(|a| a.as_str()) == authority
 }
 
 async fn security_headers(request: Request<Body>, next: Next) -> Response {

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 
 // A deploy only updates installed PWAs if the Docker build rewrites the cache name
 // the service worker declares. These assertions fail when that wiring drifts.
@@ -25,4 +26,25 @@ test('the service worker only serves the shell and cleans older cache generation
   for (const forbidden of ['caches.delete("misfinanzas")', 'indexedDB.databases()']) {
     assert.ok(!sw.includes(forbidden), `static/sw.js must not contain ${forbidden}`);
   }
+});
+
+test('the offline shell installs the local fonts and login artwork', async () => {
+  const handlers = new Map();
+  const installed = new Set();
+  runInNewContext(readFileSync('static/sw.js','utf8'), {
+    self:{addEventListener:(type, handler) => handlers.set(type, handler)},
+    Request:class { constructor(path) { this.path = path; } },
+    caches:{open:async () => ({addAll:async requests => {
+      for (const {path} of requests) {
+        if (path !== '/') assert.ok(readFileSync('static' + path).length);
+        installed.add(path);
+      }
+    }})},
+  });
+  let installation;
+  handlers.get('install')({waitUntil:promise => { installation = promise; }});
+  await installation;
+  assert.ok(installed.has('/fonts/ibm-plex-sans.woff2'));
+  assert.ok(installed.has('/fonts/source-serif-4.woff2'));
+  assert.ok(installed.has('/login-art.webp'));
 });

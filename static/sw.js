@@ -1,8 +1,9 @@
-const CACHE = 'misfinanzas-shell-v4';
+const CACHE = 'misfinanzas-shell-v7';
 const SHELL = [
   '/', '/index.html', '/style.css', '/app.mjs', '/view-model.mjs',
   '/offline-store.mjs', '/sync.mjs', '/ui.mjs', '/extras.mjs', '/credit.mjs',
   '/planning.mjs', '/reconciliation.mjs', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png',
+  '/fonts/ibm-plex-sans.woff2', '/fonts/source-serif-4.woff2', '/login-art.webp',
 ];
 
 self.addEventListener('install', event => {

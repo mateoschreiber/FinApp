@@ -21,7 +21,7 @@ export function renderReconciliation(container, context) {
   uploadLabel.append(file);
   const actions=el('div');
   actions.className='actions';
-  const results=el('div');
+  const results=el('div',null,'import-preview');
   container.replaceChildren(el('h2','Conciliación bancaria'),label,uploadLabel,
     el('p','CSV UTF-8 con fecha, importe, descripción y referencia. Usa AAAA-MM-DD e importes enteros. Los débitos llevan signo negativo. En tarjetas, un cargo aumenta la deuda y lleva signo positivo. La referencia es opcional y permite distinguir filas idénticas.'),
     actions,status,results);
@@ -105,7 +105,7 @@ export function renderReconciliation(container, context) {
     const result=await latest.api('/api/reconciliation/import','POST',{account_id:account,csv,confirm:false});
     if(!alive() || account!==select.value || selected!==file.files[0]) return;
     preview={account_id:account,csv};
-    status.textContent=result.added+' línea(s) nueva(s) y '+result.existing+' ya registrada(s).';
+    status.textContent='Vista previa: '+result.added+' línea(s) nueva(s) y '+result.existing+' ya registrada(s).';
     confirm.hidden=!result.added;
   });
   const confirm=button(actions,'Confirmar importación',async()=>{
