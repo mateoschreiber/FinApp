@@ -238,3 +238,40 @@ Además: capital conservado, última cuota = remanente, alemana y efectiva sin r
 - `cargo fmt --check`, `clippy -D warnings`, `cargo test --locked` (**78 Rust**: 41 lib, 14 auth, 2 credit_migration, 8 finance_api, 6 finance_invariants, 3 full_flow, 4 import_load), `npm test` (**40 JS**), build y suite Docker: todo en verde.
 - **Riesgo residual:** la anualidad francesa y la tasa efectiva siguen usando f64, por lo que no se afirma que toda la amortización sea matemáticamente exacta. V2 corrige solo el interés nominal.
 - Antes de cualquier despliegue: hacer `bash scripts/backup.sh <destino>`, verificar el checksum y ensayar la restauración con `scripts/restore-check.sh`; la migración 009 es aditiva y no modifica datos, pero altera el esquema.
+
+## F9.2B — Préstamos, desembolsos y pagos
+
+Nuevo archivo `tests/credit_flows.rs` (7 pruebas de integración sobre el router Axum con sesión real). Contrato confirmado: `POST /api/credit` devuelve **204** en éxito, **400** en validaciones, **404** si el préstamo no pertenece al usuario y **409** si un `request_id` se reutiliza con otro payload; `GET /api/credit` devuelve la cartera. Los esperados son literales; el estado se comprueba con SQL directo (`credit_loans`, `credit_repayments`, `finance_operations`, `finance_postings`, `finance_balance_postings`, `credit_requests`, historial).
+
+| ID | Esperado | Observado | Estado |
+|---|---|---|---|
+| 2B-01 desembolso 1.000 | banco 1.000, deuda 1.000, patrimonio 0, income/expense/net 0, cash_flow +1.000, loan_debt 1.000 | idéntico; 1 posting `loan_draw`, 0 operaciones de ingreso/gasto | OK |
+| 2B-02 pago 200+20+1 | banco 779, deuda 800, amortizado 200, interés 20, comisión 1, expense 21, net −21, patrimonio −21, cash_flow 779, Δ efectivo −221 | idéntico; 4 postings exactos, principal como `loan_repayment` no gasto | OK |
+| 2B-03 cuatro pagos 300+300+300+100 | capital pagado 1.000, deuda 0, rechazo de 1 adicional, sin intereses | idéntico; plazo 2 y cuotas [500,500] inalterados; expense 0; cash_flow 0 | OK |
+| 2B-04 anulación de pago | banco 1000, deuda 1000, expense/net/patrimonio 0, cash_flow 1000, 3 tombstones, historial 7 filas (3 con `previous`), sin pagos | idéntico; replay del mismo `request_id` sin efectos nuevos | OK |
+| 2B-05 rechazos | 400 para interés/comisión sin categoría, capital > deuda, fecha previa, cuenta tarjeta, todo en cero, total > SAFE; 404 para préstamo ajeno/inexistente | idéntico; 0 pagos nuevos, 1 posting (el desembolso), saldo 1000, `credit_requests` sin la solicitud rechazada; el ID rechazado se reutiliza con éxito después | OK |
+| 2B-06 idempotencia | A 204 y 1 pago; B 204 sin duplicar; C 409; deuda 800; 1 fila en `credit_requests` | idéntico | OK |
+| 2B-07 V1/V2 | V1 interés 408.333.333.333.333 y V2 …334; ambos aceptan pago y anulación; versiones 1 y 2 intactas; sin pagos tras anular | idéntico | OK |
+
+### Reglas verificadas y comprobaciones contables
+
+- `loan_draw` aumenta efectivo y crea deuda, pero no es ingreso ni gasto; el patrimonio se mantiene restando `loan_debt`.
+- El pago separa capital (`loan_repayment`, no gasto), interés y comisión (`expense` con categoría); el patrimonio baja solo por interés y comisión.
+- El pago extraordinario reduce saldo sin recalcular cuotas ni plazo; un pago adicional sobre deuda cero se rechaza.
+- La anulación revierte exactamente los tres componentes, conserva el historial y no duplica efectos al repetirse.
+- Las nueve validaciones rechazadas no dejan postings parciales ni consumen un `request_id` válido.
+- Cada escenario ejecuta `PRAGMA integrity_check=ok` y `PRAGMA foreign_key_check=0`, además de las invariantes contables (capital inicial − pagado = pendiente; Σ postings = saldo).
+
+### Mutaciones (restauradas; diff limpio)
+
+| Mutación | Pruebas que fallaron |
+|---|---|
+| `outstanding = principal` (ignorar pagos) | B02, B03, B06 (3) |
+| Publicar capital amortizado como `expense` | B02, B03, B04, B05, B06, B07 (6) |
+| No revertir el interés al anular | B04 (1) |
+
+### Resultado y riesgos
+
+No se detectaron defectos: el backend ya aplica estas reglas. No se modificó código de producción, fórmulas de amortización ni `creditProjection` del frontend (queda para F9.2D). Riesgos para F9.2C y F9.2D: compra en cuotas con cargo al resumen, asignación de pagos por mes y coherencia entre `creditProjection`, `cardStatement` y la cartera del servidor.
+
+Validación: `cargo test --locked --test credit_flows` (7/7), `cargo fmt --check`, `cargo clippy --all-targets --locked -- -D warnings`, `cargo test --locked` (**85 Rust**: 41 lib, 14 auth, 7 credit_flows, 2 credit_migration, 8 finance_api, 6 finance_invariants, 3 full_flow, 4 import_load), `npm test` (**40 JS**), build y suite Docker: todo en verde. Cero pruebas ignoradas.
