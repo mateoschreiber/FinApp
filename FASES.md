@@ -1,6 +1,6 @@
 # Fases de MisFinanzas — implementadas y pendientes
 
-Fecha: 2026-11-21. Fuentes: `docs/superpowers/plans/2026-11-14-misfinanzas-fase-1.md`, `AUDITORIA.md` (F8.4–F9.3C) y la auditoría general del 2026-11-21 (140 pruebas Rust + 62 JavaScript en verde, `cargo test --locked` y `npm test` con código de salida 0).
+Fecha: 2026-11-22. Fuentes: `docs/superpowers/plans/2026-11-14-misfinanzas-fase-1.md`, `AUDITORIA.md` (F8.4–F15) y la auditoría actualizada al 2026-11-22 (141 pruebas Rust + 65 JavaScript en verde, `cargo test --locked` y `npm test` con código de salida 0).
 
 Criterio de hecho de todo el plan: cada cambio lleva primero una prueba que falla, luego se implementa, y `cargo fmt --check`, `clippy -D warnings`, `cargo test --locked` y `npm test` quedan en verde antes de dar la fase por cerrada.
 
@@ -85,6 +85,14 @@ Reglas de oro de la fase (de la skill): nunca quitar el anillo de foco; objetivo
 - Con 10.000 movimientos, ambas versiones muestran 25 filas por página. En una corrida local, el CLS del acceso fue 0,000 en F13 y 0,014 en F14. El del Resumen fue 0,003 en ambas versiones.
 - La instalación y el teclado en un Android físico quedan pendientes de un dispositivo conectado.
 - El acceso pasó a ser una pantalla propia con una composición distinta en escritorio y móvil, formulario con estado de envío y error, y opción de mostrar la contraseña. El panel principal comparte la misma tipografía, paleta y controles, con una tabla de movimientos más fácil de recorrer.
+
+### F15 — Optimización de rendimiento del backend (ejecutada)
+
+- **SQLite y caché de sentencias (`src/db.rs`)**: `PRAGMA journal_mode=WAL`, `PRAGMA synchronous=NORMAL`, `PRAGMA temp_store=MEMORY` y `set_prepared_statement_cache_capacity(64)` al inicializar la conexión.
+- **Rutas calientes y lecturas directas (`src/finance.rs`, `src/catalog.rs`, `src/planning.rs`, `src/credit.rs`, `src/auth.rs`)**: uso de `prepare_cached`, lectura de columnas reales de `finance_operations` en lugar de deserializar la columna virtual JSON `data`, omisión de la consulta `invalid_refunds` cuando la operación no es `refund` ni edita un `expense`, y consulta puntual en `catalog::archive`.
+- **Importación masiva XLSX (`src/exchange.rs`)**: `prepare_cached`, `fingerprint(row)` calculado una sola vez por fila, caché en memoria de `catalog::cutoff` por cuenta y extracción directa de `DataRef::String`/`SharedString`.
+- **Runtime Tokio (`src/auth.rs`, `src/finance.rs`, `src/planning.rs`, `src/credit.rs`, `src/reconciliation.rs`)**: `Argon2` y handlers que toman `Mutex<Connection>` movidos a `tokio::task::spawn_blocking`.
+- **Evidencia**: `tests/import_integrity.rs` bajó de `31,31 s` a `8,80 s` (~3,5×) y `tests/import_load.rs` (25.000 filas) de `29,15 s` a `7,00 s` (~4,1×). Frontend verificado en Chrome real (`33/33` respuestas HTTP 200, 0 errores de consola).
 
 ### P3 — Seguridad (5,5–10 h, parcialmente condicional) — al final por decisión del usuario
 

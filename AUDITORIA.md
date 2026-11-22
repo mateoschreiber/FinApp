@@ -658,3 +658,24 @@ Solo visual: iconos SVG propios, micro-movimiento con significado y jerarquía r
 ### Validación
 
 `npm test` 64/64 exit 0 tras todos los cambios. Sin cambios en Rust. LIMITACIÓN: el modelo no puede inspeccionar píxeles de una captura; la verificación se hizo sobre DOM, estilos computados y geometría del navegador real. El aspecto estético final depende del ojo del usuario en su dispositivo.
+
+## F14 — Rediseño de MisFinanzas
+
+- Navegación lateral y barra inferior con historial, enlaces a secciones y acceso a cambios locales; renovación de acceso, Resumen, registro de movimientos, Créditos, Planificación, Configuración, importación y conciliación.
+- Tipografía Source Serif 4 e IBM Plex Sans e ilustración optimizada servidas localmente e incluidas en la caché offline (`sw.js`).
+- Verificado en Chromium local en cinco anchos (360–1440 px), modo oscuro, `prefers-reduced-motion`, actualización de service worker con cola pendiente, alta/edición/borrado, conflictos, importación XLSX y conciliación CSV.
+
+## F15 — Optimización de rendimiento del backend
+
+### Cambios aplicados
+
+- **Configuración SQLite (`src/db.rs`)**: se habilitaron `PRAGMA journal_mode=WAL`, `PRAGMA synchronous=NORMAL`, `PRAGMA temp_store=MEMORY` y `set_prepared_statement_cache_capacity(64)` (actualizando la decisión previa de F8.4 donde no se había activado WAL).
+- **Sentencias preparadas cacheadas y lectura de columnas (`src/finance.rs`, `src/catalog.rs`, `src/planning.rs`, `src/credit.rs`, `src/auth.rs`)**: reemplazo de `prepare`/`query_row`/`execute` por `prepare_cached` en rutas críticas; lectura directa de columnas de `finance_operations` en `apply_change`, `snapshot_since` y `credit::portfolio` evitando construir y parsear la columna virtual `data`; reemplazo de `json_extract(o.data, ...)` por `o.date` y `o.deleted` en `planning.rs`; omisión de `invalid_refunds` cuando la operación no es `refund` ni actualiza un `expense`; consulta puntual por `(user_id, entity, id)` en `catalog::archive`.
+- **Importación XLSX (`src/exchange.rs`)**: `prepare_cached` en consultas por fila, cálculo único de `fingerprint(row)` por fila, caché de `catalog::cutoff` por cuenta durante la importación y lectura directa de `DataRef::String`/`SharedString`.
+- **Desbloqueo del runtime asíncrono (`src/auth.rs`, `src/finance.rs`, `src/planning.rs`, `src/credit.rs`, `src/reconciliation.rs`)**: hashing/verificación `Argon2` y handlers que bloquean `Mutex<Connection>` delegados a `tokio::task::spawn_blocking`.
+
+### Validación F15
+
+- `cargo fmt --check` y `cargo clippy --all-targets --locked -- -D warnings` limpios.
+- `cargo test --locked`: **141 pruebas Rust** en verde. En perfil `test` (debug), `tests/import_integrity.rs` (39 pruebas) bajó de **31,31 s** a **8,80 s** (~3,5×) y `tests/import_load.rs` (25.000 filas) de **29,15 s** a **7,00 s** (~4,1×).
+- Verificación en Chrome real (`http://127.0.0.1:3099/`): carga inicial (`17/17` activos en 200), login, navegación por `Resumen`, `Nuevo`, `Créditos`, `Planificación` y `Configuración`, creación de cuenta y sincronización incremental (`33/33` peticiones HTTP 200, 0 errores en consola).

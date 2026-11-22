@@ -497,8 +497,13 @@ impl Import<'_> {
         };
         if ty == "refund" && category.is_none() {
             category = conn
-                .prepare_cached("SELECT category_id FROM finance_operations WHERE user_id=? AND id=?")
-                .and_then(|mut s| s.query_row(params![self.user, original], |r| r.get(0)).optional())
+                .prepare_cached(
+                    "SELECT category_id FROM finance_operations WHERE user_id=? AND id=?",
+                )
+                .and_then(|mut s| {
+                    s.query_row(params![self.user, original], |r| r.get(0))
+                        .optional()
+                })
                 .map_err(|_| "No se pudo leer el gasto original.")?
                 .flatten();
         }
