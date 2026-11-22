@@ -216,6 +216,8 @@ fn book(bytes: &[u8]) -> Result<Sheets, String> {
                         .as_date()
                         .map(|date| date.to_string())
                         .ok_or_else(|| format!("Fecha inválida en {name}, fila {}.", row + 1))?,
+                    DataRef::String(s) => s.trim().to_owned(),
+                    DataRef::SharedString(s) => s.trim().to_owned(),
                     _ => Data::from(value.clone()).to_string().trim().to_owned(),
                 };
                 rows.entry(row + 1).or_default().insert(label.clone(), text);
@@ -284,6 +286,7 @@ struct Import<'a> {
     input: &'a Upload,
     mapping: BTreeMap<String, String>,
     expected: BTreeMap<String, i64>,
+    cutoffs: BTreeMap<String, Option<String>>,
     report: Preview,
     sheet: &'static str,
     line: u32,
@@ -455,6 +458,7 @@ impl Import<'_> {
         row: &Row,
         id: &str,
         ty: &str,
+        row_fingerprint: &str,
     ) -> Result<(), String> {
         let date = parse_date(value(row, "fecha"))?;
         let amount = number(value(row, "monto"))?;
@@ -493,19 +497,21 @@ impl Import<'_> {
         };
         if ty == "refund" && category.is_none() {
             category = conn
-                .query_row(
-                    "SELECT category_id FROM finance_operations WHERE user_id=? AND id=?",
-                    params![self.user, original],
-                    |r| r.get(0),
-                )
-                .optional()
+                .prepare_cached("SELECT category_id FROM finance_operations WHERE user_id=? AND id=?")
+                .and_then(|mut s| s.query_row(params![self.user, original], |r| r.get(0)).optional())
                 .map_err(|_| "No se pudo leer el gasto original.")?
                 .flatten();
         }
         for acct in BTreeSet::from_iter([account.as_deref(), dest.as_deref()].into_iter().flatten())
         {
-            let cutoff = catalog::cutoff(conn, self.user, acct)
-                .map_err(|_| "No se pudo consultar la fecha de corte.")?;
+            let cutoff = if let Some(cached) = self.cutoffs.get(acct) {
+                cached.clone()
+            } else {
+                let loaded = catalog::cutoff(conn, self.user, acct)
+                    .map_err(|_| "No se pudo consultar la fecha de corte.")?;
+                self.cutoffs.insert(acct.to_owned(), loaded.clone());
+                loaded
+            };
             if cutoff.is_some_and(|cutoff| date < cutoff) {
                 self.report.warnings.push(format!(
                     "Movimiento {id}: anterior a la fecha de corte de {acct}."
@@ -516,7 +522,7 @@ impl Import<'_> {
             }
         }
         let mut change = Change {
-            request_id: format!("xlsx-{}", fingerprint(row)),
+            request_id: format!("xlsx-{row_fingerprint}"),
             id: id.into(),
             expected_version: 0,
             deleted: false,
@@ -576,9 +582,9 @@ impl Import<'_> {
                 change.id = if part == first {
                     id.into()
                 } else {
-                    format!("xlsx-{part}-{}", fingerprint(row))
+                    format!("xlsx-{part}-{row_fingerprint}")
                 };
-                change.request_id = format!("xlsx-{part}-{}", fingerprint(row));
+                change.request_id = format!("xlsx-{part}-{row_fingerprint}");
                 change.amount = Some(amount);
                 change.kind = Some(
                     if part == "capital" {
@@ -618,9 +624,16 @@ impl Import<'_> {
             _ => "finance_operations",
         };
         let fingerprint = fingerprint(row);
-        let prior=conn.query_row("SELECT target_id,fingerprint FROM import_sources WHERE user_id=? AND entity=? AND source_id=?",
-            params![self.user,entity,id], |r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?)))
-            .optional()
+        let prior = conn
+            .prepare_cached(
+                "SELECT target_id,fingerprint FROM import_sources WHERE user_id=? AND entity=? AND source_id=?",
+            )
+            .and_then(|mut s| {
+                s.query_row(params![self.user, entity, id], |r| {
+                    Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+                })
+                .optional()
+            })
             .map_err(|e| {
                 log_sqlite("source_lookup", &self.place(), &e);
                 "No se pudo consultar el historial de importación."
@@ -658,11 +671,10 @@ impl Import<'_> {
             _ => false,
         };
         let exists: bool = conn
-            .query_row(
-                &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE user_id=? AND id=?)"),
-                params![self.user, target],
-                |r| r.get(0),
-            )
+            .prepare_cached(&format!(
+                "SELECT EXISTS(SELECT 1 FROM {table} WHERE user_id=? AND id=?)"
+            ))
+            .and_then(|mut s| s.query_row(params![self.user, target], |r| r.get(0)))
             .map_err(|e| {
                 log_sqlite("source_exists", &self.place(), &e);
                 "No se pudo comprobar el ID."
@@ -710,7 +722,7 @@ impl Import<'_> {
             }
             _ => match key(value(row, "estado")).as_str() {
                 "" | "activo" | "activa" | "registrado" | "confirmado" | "aplicado" | "vigente"
-                | "ok" => self.add_operation(conn, row, id, ty)?,
+                | "ok" => self.add_operation(conn, row, id, ty, &fingerprint)?,
                 "cancelado" | "anulado" | "eliminado" | "borrado" => {
                     self.report.warnings.push(format!(
                         "Movimiento {id}: omitido por estado {}.",
@@ -721,14 +733,12 @@ impl Import<'_> {
                 _ => return Err(format!("Revisa el estado «{}».", value(row, "estado"))),
             },
         }
-        conn.execute(
-            "INSERT INTO import_sources VALUES(?,?,?,?,?)",
-            params![self.user, entity, id, target, fingerprint],
-        )
-        .map_err(|e| {
-            log_sqlite("source_save", &self.place(), &e);
-            "No se pudo guardar el origen de la fila."
-        })?;
+        conn.prepare_cached("INSERT INTO import_sources VALUES(?,?,?,?,?)")
+            .and_then(|mut s| s.execute(params![self.user, entity, id, target, fingerprint]))
+            .map_err(|e| {
+                log_sqlite("source_save", &self.place(), &e);
+                "No se pudo guardar el origen de la fila."
+            })?;
         if skipped {
             self.report.skipped += 1;
         } else {
@@ -749,6 +759,7 @@ fn run(
         input,
         mapping: input.mapping.clone(),
         expected: BTreeMap::new(),
+        cutoffs: BTreeMap::new(),
         report: Preview::default(),
         sheet: "",
         line: 0,

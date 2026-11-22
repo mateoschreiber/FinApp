@@ -18,7 +18,8 @@ impl Database {
     }
 
     fn initialize(mut conn: Connection) -> rusqlite::Result<Self> {
-        conn.execute_batch("PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS schema_versions(version INTEGER PRIMARY KEY)")?;
+        conn.set_prepared_statement_cache_capacity(64);
+        conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA foreign_keys=ON; CREATE TABLE IF NOT EXISTS schema_versions(version INTEGER PRIMARY KEY)")?;
         const MIGRATIONS: &[&str] = &[
             include_str!("../migrations/001_auth.sql"),
             include_str!("../migrations/002_finance.sql"),

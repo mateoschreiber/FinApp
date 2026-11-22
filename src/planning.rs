@@ -222,12 +222,16 @@ async fn save_plan(
     h: HeaderMap,
     Json(v): Json<Plan>,
 ) -> Result<StatusCode, Error> {
-    let u = user(&s.db, &h)?;
-    let mut conn = s.db.0.lock().map_err(|_| Error::Database)?;
-    let tx = conn.transaction()?;
-    save(&tx, &u, v)?;
-    tx.commit()?;
-    Ok(StatusCode::NO_CONTENT)
+    tokio::task::spawn_blocking(move || {
+        let u = user(&s.db, &h)?;
+        let mut conn = s.db.0.lock().map_err(|_| Error::Database)?;
+        let tx = conn.transaction()?;
+        save(&tx, &u, v)?;
+        tx.commit()?;
+        Ok(StatusCode::NO_CONTENT)
+    })
+    .await
+    .map_err(|_| Error::Database)?
 }
 
 fn recurrence_id(id: &str, month: &str) -> String {
@@ -350,10 +354,10 @@ pub(crate) fn report(conn: &Connection, u: &str, month: &str) -> Result<Value, E
         let day=r.get::<_,u8>(7)?;
         let due=(first.as_str()<=month && last.as_ref().is_none_or(|m|m.as_str()>=month)).then(||format!("{month}-{:02}",day.min(last_day)));
         let op_id=recurrence_id(&id,month);
-        let posted:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM finance_operations WHERE user_id=?1 AND id=?2 AND deleted=0)",params![u,op_id],|row|row.get(0))?;
+        let posted:bool=conn.prepare_cached("SELECT EXISTS(SELECT 1 FROM finance_operations WHERE user_id=?1 AND id=?2 AND deleted=0)")?.query_row(params![u,op_id],|row|row.get(0))?;
         Ok(json!({"id":id,"name":r.get::<_,String>(1)?,"account_id":r.get::<_,String>(2)?,"category_id":r.get::<_,String>(3)?,"amount":r.get::<_,i64>(4)?,"first_month":first,"last_month":last,"day":day,"due":due,"posted":posted,"operation_id":op_id}))
     })?.collect::<Result<Vec<_>,_>>()?;
-    let mut stmt=conn.prepare("SELECT p.id,p.operation_id,p.name,p.mime,length(p.content),p.digest FROM planning_receipts p JOIN finance_operations o ON o.user_id=p.user_id AND o.id=p.operation_id WHERE p.user_id=?1 AND substr(json_extract(o.data,'$.date'),1,7)=?2 AND json_extract(o.data,'$.deleted')=0 ORDER BY p.operation_id,p.id")?;
+    let mut stmt=conn.prepare_cached("SELECT p.id,p.operation_id,p.name,p.mime,length(p.content),p.digest FROM planning_receipts p JOIN finance_operations o ON o.user_id=p.user_id AND o.id=p.operation_id WHERE p.user_id=?1 AND substr(o.date,1,7)=?2 AND o.deleted=0 ORDER BY p.operation_id,p.id")?;
     let receipts=stmt.query_map(params![u,month],|r|Ok(json!({"id":r.get::<_,String>(0)?,"operation_id":r.get::<_,String>(1)?,"name":r.get::<_,String>(2)?,"mime":r.get::<_,String>(3)?,"size":r.get::<_,i64>(4)? as usize,"digest":r.get::<_,String>(5)?})))?.collect::<Result<Vec<_>,_>>()?;
     digest.update(serde_json::to_vec(&(&budgets, &receipts)).map_err(|_| Error::Database)?);
     let balances = finance::balances_in(conn, u, Some(&end))?;
@@ -431,9 +435,13 @@ async fn get_report(
     h: HeaderMap,
     Path(month): Path<String>,
 ) -> Result<Json<Value>, Error> {
-    let u = user(&s.db, &h)?;
-    let conn = s.db.0.lock().map_err(|_| Error::Database)?;
-    Ok(Json(report(&conn, &u, &month)?))
+    tokio::task::spawn_blocking(move || {
+        let u = user(&s.db, &h)?;
+        let conn = s.db.0.lock().map_err(|_| Error::Database)?;
+        Ok(Json(report(&conn, &u, &month)?))
+    })
+    .await
+    .map_err(|_| Error::Database)?
 }
 #[derive(Deserialize)]
 struct Review {
@@ -445,15 +453,19 @@ async fn review(
     Path(month): Path<String>,
     Json(v): Json<Review>,
 ) -> Result<StatusCode, Error> {
-    let u = user(&s.db, &h)?;
-    let mut conn = s.db.0.lock().map_err(|_| Error::Database)?;
-    let tx = conn.transaction()?;
-    if report(&tx, &u, &month)?["digest"].as_str() != Some(&v.digest) {
-        return Err(Error::Stale);
-    }
-    tx.execute("INSERT INTO planning_reviews VALUES(?1,?2,?3) ON CONFLICT(user_id,month) DO UPDATE SET digest=excluded.digest",params![u,month,v.digest])?;
-    tx.commit()?;
-    Ok(StatusCode::NO_CONTENT)
+    tokio::task::spawn_blocking(move || {
+        let u = user(&s.db, &h)?;
+        let mut conn = s.db.0.lock().map_err(|_| Error::Database)?;
+        let tx = conn.transaction()?;
+        if report(&tx, &u, &month)?["digest"].as_str() != Some(&v.digest) {
+            return Err(Error::Stale);
+        }
+        tx.execute("INSERT INTO planning_reviews VALUES(?1,?2,?3) ON CONFLICT(user_id,month) DO UPDATE SET digest=excluded.digest",params![u,month,v.digest])?;
+        tx.commit()?;
+        Ok(StatusCode::NO_CONTENT)
+    })
+    .await
+    .map_err(|_| Error::Database)?
 }
 #[derive(Deserialize)]
 struct Upload {
@@ -489,7 +501,9 @@ fn store_receipt(conn: &Connection, u: &str, v: Upload) -> Result<String, Error>
     if stored.saturating_add(i64::try_from(bytes.len()).unwrap_or(i64::MAX)) > MAX_TOTAL_RECEIPTS {
         return Err(Error::Invalid);
     }
-    let exists:bool=conn.query_row("SELECT EXISTS(SELECT 1 FROM finance_operations WHERE user_id=?1 AND id=?2 AND json_extract(data,'$.deleted')=0)",params![u,v.operation_id],|r|r.get(0))?;
+    let exists: bool = conn
+        .prepare_cached("SELECT EXISTS(SELECT 1 FROM finance_operations WHERE user_id=?1 AND id=?2 AND deleted=0)")?
+        .query_row(params![u, v.operation_id], |r| r.get(0))?;
     if !exists {
         return Err(Error::Missing);
     }
@@ -507,40 +521,52 @@ async fn upload(
     h: HeaderMap,
     Json(v): Json<Upload>,
 ) -> Result<Json<Value>, Error> {
-    let u = user(&s.db, &h)?;
-    let conn = s.db.0.lock().map_err(|_| Error::Database)?;
-    Ok(Json(json!({"id":store_receipt(&conn,&u,v)?})))
+    tokio::task::spawn_blocking(move || {
+        let u = user(&s.db, &h)?;
+        let conn = s.db.0.lock().map_err(|_| Error::Database)?;
+        Ok(Json(json!({"id":store_receipt(&conn,&u,v)?})))
+    })
+    .await
+    .map_err(|_| Error::Database)?
 }
 async fn download(
     State(s): State<AppState>,
     h: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Response, Error> {
-    let u = user(&s.db, &h)?;
-    let conn = s.db.0.lock().map_err(|_| Error::Database)?;
-    let (mime,bytes):(String,Vec<u8>)=conn.query_row("SELECT p.mime,p.content FROM planning_receipts p JOIN finance_operations o ON o.user_id=p.user_id AND o.id=p.operation_id WHERE p.user_id=?1 AND p.id=?2 AND json_extract(o.data,'$.deleted')=0",params![u,id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(Error::Missing)?;
-    Ok((
-        [
-            (header::CONTENT_TYPE, mime.as_str()),
-            (header::CONTENT_DISPOSITION, "attachment"),
-        ],
-        bytes,
-    )
-        .into_response())
+    tokio::task::spawn_blocking(move || {
+        let u = user(&s.db, &h)?;
+        let conn = s.db.0.lock().map_err(|_| Error::Database)?;
+        let (mime,bytes):(String,Vec<u8>)=conn.prepare_cached("SELECT p.mime,p.content FROM planning_receipts p JOIN finance_operations o ON o.user_id=p.user_id AND o.id=p.operation_id WHERE p.user_id=?1 AND p.id=?2 AND o.deleted=0")?.query_row(params![u,id],|r|Ok((r.get(0)?,r.get(1)?))).optional()?.ok_or(Error::Missing)?;
+        Ok((
+            [
+                (header::CONTENT_TYPE, mime.as_str()),
+                (header::CONTENT_DISPOSITION, "attachment"),
+            ],
+            bytes,
+        )
+            .into_response())
+    })
+    .await
+    .map_err(|_| Error::Database)?
 }
 async fn remove_receipt(
     State(s): State<AppState>,
     h: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<StatusCode, Error> {
-    let u = user(&s.db, &h)?;
-    let conn = s.db.0.lock().map_err(|_| Error::Database)?;
-    removed(
-        &conn,
-        "DELETE FROM planning_receipts WHERE user_id=?1 AND id=?2",
-        params![u, id],
-    )?;
-    Ok(StatusCode::NO_CONTENT)
+    tokio::task::spawn_blocking(move || {
+        let u = user(&s.db, &h)?;
+        let conn = s.db.0.lock().map_err(|_| Error::Database)?;
+        removed(
+            &conn,
+            "DELETE FROM planning_receipts WHERE user_id=?1 AND id=?2",
+            params![u, id],
+        )?;
+        Ok(StatusCode::NO_CONTENT)
+    })
+    .await
+    .map_err(|_| Error::Database)?
 }
 pub fn routes() -> Router<AppState> {
     Router::new()

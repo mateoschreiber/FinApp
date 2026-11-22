@@ -597,25 +597,20 @@ fn portfolio(db: &Database, user: &str) -> Result<Portfolio> {
             payments,
         });
     }
-    let mut query=conn.prepare("SELECT p.operation_id,p.first_due,p.periods,o.data FROM credit_purchases p JOIN finance_operations o ON p.user_id=o.user_id AND p.operation_id=o.id WHERE p.user_id=? ORDER BY p.first_due,p.operation_id").map_err(database)?;
+    let mut query=conn.prepare_cached("SELECT p.operation_id,p.first_due,p.periods,o.amount FROM credit_purchases p JOIN finance_operations o ON p.user_id=o.user_id AND p.operation_id=o.id WHERE p.user_id=? AND o.deleted=0 ORDER BY p.first_due,p.operation_id").map_err(database)?;
     let mut rows = query.query([user]).map_err(database)?;
     while let Some(row) = rows.next().map_err(database)? {
-        let op: finance::Operation =
-            serde_json::from_str(&row.get::<_, String>(3).map_err(database)?)
-                .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-        if !op.deleted {
-            result.purchases.push(Purchase {
-                operation_id: op.id,
-                installments: schedule(
-                    op.amount,
-                    &row.get::<_, String>(1).map_err(database)?,
-                    row.get(2).map_err(database)?,
-                    "german",
-                    0,
-                    "nominal",
-                )?,
-            });
-        }
+        result.purchases.push(Purchase {
+            operation_id: row.get(0).map_err(database)?,
+            installments: schedule(
+                row.get(3).map_err(database)?,
+                &row.get::<_, String>(1).map_err(database)?,
+                row.get(2).map_err(database)?,
+                "german",
+                0,
+                "nominal",
+            )?,
+        });
     }
     let mut query=conn.prepare("SELECT a.operation_id,a.month,a.amount,a.payment_version FROM credit_allocations a JOIN finance_operations o ON o.user_id=a.user_id AND o.id=a.operation_id AND o.version=a.payment_version WHERE a.user_id=? AND o.deleted=0 AND o.kind='payment' ORDER BY a.month,a.operation_id").map_err(database)?;
     result.allocations = query
@@ -633,17 +628,25 @@ fn portfolio(db: &Database, user: &str) -> Result<Portfolio> {
     Ok(result)
 }
 async fn list(State(state): State<AppState>, headers: HeaderMap) -> Result<Json<Portfolio>> {
-    let user = finance::bound_user(&state.db, &headers)?;
-    Ok(Json(portfolio(&state.db, &user.id)?))
+    tokio::task::spawn_blocking(move || {
+        let user = finance::bound_user(&state.db, &headers)?;
+        Ok(Json(portfolio(&state.db, &user.id)?))
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
 async fn save(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(command): Json<Command>,
 ) -> Result<StatusCode> {
-    let user = finance::bound_user(&state.db, &headers)?;
-    mutate(&state.db, &user.id, &command)?;
-    Ok(StatusCode::NO_CONTENT)
+    tokio::task::spawn_blocking(move || {
+        let user = finance::bound_user(&state.db, &headers)?;
+        mutate(&state.db, &user.id, &command)?;
+        Ok(StatusCode::NO_CONTENT)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
 }
 pub fn routes() -> Router<AppState> {
     Router::new().route("/api/credit", get(list).post(save))

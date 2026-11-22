@@ -324,65 +324,85 @@ async fn listing(
     h: HeaderMap,
     Query(q): Query<List>,
 ) -> Result<Json<Page<StatementLine>>> {
-    let user = owner(&s, &h)?;
-    let c =
-        s.db.0
-            .lock()
-            .map_err(|_| database(rusqlite::Error::InvalidQuery))?;
-    list(&c, &user, &q).map(Json)
+    tokio::task::spawn_blocking(move || {
+        let user = owner(&s, &h)?;
+        let c =
+            s.db.0
+                .lock()
+                .map_err(|_| database(rusqlite::Error::InvalidQuery))?;
+        list(&c, &user, &q).map(Json)
+    })
+    .await
+    .map_err(|_| database(rusqlite::Error::InvalidQuery))?
 }
 async fn options(
     State(s): State<AppState>,
     h: HeaderMap,
     Query(q): Query<CandidateQuery>,
 ) -> Result<Json<Page<Candidate>>> {
-    let user = owner(&s, &h)?;
-    let c =
-        s.db.0
-            .lock()
-            .map_err(|_| database(rusqlite::Error::InvalidQuery))?;
-    candidates(&c, &user, &q).map(Json)
+    tokio::task::spawn_blocking(move || {
+        let user = owner(&s, &h)?;
+        let c =
+            s.db.0
+                .lock()
+                .map_err(|_| database(rusqlite::Error::InvalidQuery))?;
+        candidates(&c, &user, &q).map(Json)
+    })
+    .await
+    .map_err(|_| database(rusqlite::Error::InvalidQuery))?
 }
 async fn upload(
     State(s): State<AppState>,
     h: HeaderMap,
     Json(q): Json<Upload>,
 ) -> Result<Json<Imported>> {
-    let user = owner(&s, &h)?;
-    let mut c =
-        s.db.0
-            .lock()
-            .map_err(|_| database(rusqlite::Error::InvalidQuery))?;
-    import(&mut c, &user, &q).map(Json)
+    tokio::task::spawn_blocking(move || {
+        let user = owner(&s, &h)?;
+        let mut c =
+            s.db.0
+                .lock()
+                .map_err(|_| database(rusqlite::Error::InvalidQuery))?;
+        import(&mut c, &user, &q).map(Json)
+    })
+    .await
+    .map_err(|_| database(rusqlite::Error::InvalidQuery))?
 }
 async fn attach(
     State(s): State<AppState>,
     h: HeaderMap,
     Json(q): Json<Link>,
 ) -> Result<StatusCode> {
-    let user = owner(&s, &h)?;
-    let c =
-        s.db.0
-            .lock()
-            .map_err(|_| database(rusqlite::Error::InvalidQuery))?;
-    link(&c, &user, &q)?;
-    Ok(StatusCode::NO_CONTENT)
+    tokio::task::spawn_blocking(move || {
+        let user = owner(&s, &h)?;
+        let c =
+            s.db.0
+                .lock()
+                .map_err(|_| database(rusqlite::Error::InvalidQuery))?;
+        link(&c, &user, &q)?;
+        Ok(StatusCode::NO_CONTENT)
+    })
+    .await
+    .map_err(|_| database(rusqlite::Error::InvalidQuery))?
 }
 async fn detach(
     State(s): State<AppState>,
     h: HeaderMap,
     Json(q): Json<Unlink>,
 ) -> Result<StatusCode> {
-    let user = owner(&s, &h)?;
-    let c =
-        s.db.0
-            .lock()
-            .map_err(|_| database(rusqlite::Error::InvalidQuery))?;
-    let n=c.execute("DELETE FROM reconciliations WHERE user_id=?1 AND account_id=?2 AND line_id=?3 AND operation_id=?4",params![user,q.account_id,q.line_id,q.operation_id]).map_err(database)?;
-    if n == 0 {
-        return Err(conflict("El vínculo cambió. Actualiza el extracto."));
-    }
-    Ok(StatusCode::NO_CONTENT)
+    tokio::task::spawn_blocking(move || {
+        let user = owner(&s, &h)?;
+        let c =
+            s.db.0
+                .lock()
+                .map_err(|_| database(rusqlite::Error::InvalidQuery))?;
+        let n=c.execute("DELETE FROM reconciliations WHERE user_id=?1 AND account_id=?2 AND line_id=?3 AND operation_id=?4",params![user,q.account_id,q.line_id,q.operation_id]).map_err(database)?;
+        if n == 0 {
+            return Err(conflict("El vínculo cambió. Actualiza el extracto."));
+        }
+        Ok(StatusCode::NO_CONTENT)
+    })
+    .await
+    .map_err(|_| database(rusqlite::Error::InvalidQuery))?
 }
 pub fn routes() -> Router<AppState> {
     Router::new()

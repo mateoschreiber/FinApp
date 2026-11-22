@@ -95,7 +95,19 @@ pub fn current_user(db: &Database, headers: &HeaderMap) -> Option<User> {
         return None;
     }
     let conn = db.0.lock().ok()?;
-    conn.query_row("SELECT u.id,u.username,u.is_admin FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token_hash=?1 AND s.expires_at>?2", params![token_hash(token), now()], |r| Ok(User { id: r.get(0)?, username: r.get(1)?, is_admin: r.get(2)? })).optional().ok().flatten()
+    let mut stmt = conn
+        .prepare_cached("SELECT u.id,u.username,u.is_admin FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token_hash=?1 AND s.expires_at>?2")
+        .ok()?;
+    stmt.query_row(params![token_hash(token), now()], |r| {
+        Ok(User {
+            id: r.get(0)?,
+            username: r.get(1)?,
+            is_admin: r.get(2)?,
+        })
+    })
+    .optional()
+    .ok()
+    .flatten()
 }
 
 // shortcut: one global budget of 20 login attempts per 60 s, so one client can lock everyone out for up to a minute; a per-IP limit does not work behind the local proxy, which hides the real client address. Upgrade only if the proxy forwards trusted client addresses.
@@ -149,21 +161,31 @@ pub async fn login(State(state): State<AppState>, Json(creds): Json<Credentials>
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     };
     let Some((user, hash)) = row else {
-        // Equalize the expensive part of authentication for unknown usernames.
-        static DUMMY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-        let dummy = DUMMY.get_or_init(|| {
-            hash_password("not-a-real-user-password").expect("dummy password must hash")
-        });
-        if let Ok(parsed) = PasswordHash::new(dummy) {
-            let _ = Argon2::default().verify_password(creds.password.as_bytes(), &parsed);
-        }
+        // Equalize the expensive part of authentication for unknown usernames without blocking Tokio workers.
+        let password = creds.password;
+        let _ = tokio::task::spawn_blocking(move || {
+            static DUMMY: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+            let dummy = DUMMY.get_or_init(|| {
+                hash_password("not-a-real-user-password").expect("dummy password must hash")
+            });
+            if let Ok(parsed) = PasswordHash::new(dummy) {
+                let _ = Argon2::default().verify_password(password.as_bytes(), &parsed);
+            }
+        })
+        .await;
         return StatusCode::UNAUTHORIZED.into_response();
     };
-    if !PasswordHash::new(&hash).ok().is_some_and(|parsed| {
-        Argon2::default()
-            .verify_password(creds.password.as_bytes(), &parsed)
-            .is_ok()
-    }) {
+    let password = creds.password;
+    let verified = tokio::task::spawn_blocking(move || {
+        PasswordHash::new(&hash).ok().is_some_and(|parsed| {
+            Argon2::default()
+                .verify_password(password.as_bytes(), &parsed)
+                .is_ok()
+        })
+    })
+    .await
+    .unwrap_or(false);
+    if !verified {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     let mut bytes = [0u8; 32];
@@ -261,7 +283,8 @@ pub async fn create_user(
     if !valid_credentials(&creds.username, &creds.password) {
         return StatusCode::BAD_REQUEST.into_response();
     }
-    let Ok(hash) = hash_password(&creds.password) else {
+    let password = creds.password;
+    let Ok(Ok(hash)) = tokio::task::spawn_blocking(move || hash_password(&password)).await else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
     };
     let new_user = User {
