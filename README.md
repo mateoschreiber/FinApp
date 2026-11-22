@@ -1,93 +1,131 @@
 # MisFinanzas
 
-Aplicación de finanzas personales con servidor Rust, SQLite y una interfaz web pensada para dispositivos móviles y escritorio. El diseño y los límites de la primera fase están en [la especificación](docs/superpowers/specs/2026-11-14-misfinanzas-fase-1-design.md).
+[![CI](https://github.com/mateoschreiber/FinApp/actions/workflows/ci.yml/badge.svg)](https://github.com/mateoschreiber/FinApp/actions/workflows/ci.yml)
+[![Latest Release](https://img.shields.io/github/v/release/mateoschreiber/FinApp?include_prereleases&label=release)](https://github.com/mateoschreiber/FinApp/releases/tag/latest)
+![Rust](https://img.shields.io/badge/Rust-1.100-000000?logo=rust)
+![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite)
+![PWA](https://img.shields.io/badge/PWA-Offline--First-0F766E)
 
-## Uso
+Finanzas personales **offline-first** en guaraníes (`PYG`, enteros exactos). Servidor **Rust + Axum + SQLite (WAL)** e interfaz **PWA** sin dependencias de frontend.
 
-1. Después de iniciar sesión, elige **Crear mi primera cuenta**. Agrega efectivo, banco, billetera o tarjeta. Al indicar una fecha de corte, carga el saldo al inicio de ese día. Los movimientos previos siguen visibles en el historial.
-2. Crea una categoría o elige las sugeridas en **Configuración**. Registra ingresos, gastos, transferencias y pagos de tarjeta desde **Nuevo movimiento**. Para un reintegro, selecciona el gasto original y la cuenta que recibe el dinero.
-3. Usa **Créditos** para compras en cuotas, resúmenes y préstamos. FinApp registra el gasto completo de una compra financiada en la fecha de compra. Consulta cuotas y vencimientos por separado. Los préstamos creados a partir de la migración 009 usan el sistema V2 (interés nominal calculado con aritmética entera exacta); los préstamos anteriores conservan su proyección original V1. No se recalculan pagos ya registrados.
-4. En **Planificación**, selecciona un mes para consultar el resultado, el patrimonio y los vencimientos. Allí puedes gestionar presupuestos, recurrentes, objetivos y comprobantes, y marcar el mes como revisado.
-5. En **Importar y exportar**, revisa y confirma un XLSX con las hojas `Cuentas`, `Categorias` y `Movimientos`. La vista previa muestra referencias y diferencias antes de escribir. Si declaras `saldo_actual` y no coincide con el saldo calculado, la importación se detiene hasta que marques la casilla «He revisado las diferencias de saldo»: aceptar no modifica automáticamente el balance, solo permite registrar los movimientos tal cual; una importación parcial puede producir una diferencia legítima. También puedes vincular categorías externas a categorías existentes y, si un reintegro referencia un movimiento que FinApp no reconoce, elegir el gasto original desde la vista previa. También puedes conciliar extractos CSV y descargar cuentas, movimientos e informes. En una tarjeta importada, un saldo inicial positivo representa deuda y uno negativo, saldo a favor; el resumen de tarjeta muestra ese mismo signo.
+```mermaid
+flowchart LR
+    subgraph Cliente["Dispositivo (Móvil / Escritorio)"]
+        UI["Interfaz PWA"]
+        IDB[("IndexedDB\nCola offline")]
+        SW["Service Worker\nShell versionado"]
+        UI <--> IDB
+        UI <--> SW
+    end
 
-La PWA conserva los movimientos pendientes en el navegador. Si un movimiento se rechaza o entra en conflicto, revisa **Cambios locales** en el resumen. Tras cambiar de dispositivo, sincroniza para descargar las operaciones registradas.
+    subgraph Servidor["Servidor / NAS"]
+        Proxy["Caddy HTTPS\n:443 (Red local)"]
+        API["Axum API\n127.0.0.1:3000"]
+        DB[("SQLite WAL\n/data/finapp.sqlite")]
+        Backup["backup.sh + GPG\nRespaldo y verificación"]
+        Proxy --> API
+        API <--> DB
+        DB -. ".backup + SHA-256" .-> Backup
+    end
 
-En pantallas pequeñas, la barra inferior reúne Resumen, Nuevo, Créditos, Planificación y Más. En **Más** están Configuración e Importar y exportar. **Ver cambios locales** aparece cuando hay movimientos que requieren sincronización o revisión. El **Saldo neto de cuentas y tarjetas** del Resumen incluye solo esas cuentas. Consulta el patrimonio con préstamos en **Planificación**.
-
-Para trabajar sin conexión, primero inicia sesión y sincroniza en cada dispositivo. La aplicación conserva los movimientos localmente y reintenta mientras está abierta; el botón «Sincronizar ahora» permite volver a intentarlo. El navegador debe admitir IndexedDB, service workers y Web Locks. Si deniega almacenamiento persistente, puede eliminar datos locales bajo presión de almacenamiento: sincroniza con frecuencia. Cerrar sesión requiere conexión y confirma antes de descartar cambios pendientes.
-
-## Despliegue local con Docker
-
-La aplicación corre en el NAS o servidor. Los dispositivos acceden por un proxy HTTPS instalado en el mismo equipo; Docker publica el puerto de la aplicación únicamente en `127.0.0.1:3000`. Para usar la PWA desde otro equipo, **configurar HTTPS y DNS local es un paso necesario**, no basta con abrir la IP del NAS.
-
-### 1. Preparar el servidor
-
-Necesitas acceso a una terminal del NAS, Git, Docker Engine con Compose, una dirección IP local estable, un dominio propio y un proxy HTTPS. El servidor necesita conexión saliente para descargar imágenes, dependencias y emitir el certificado. Los comandos siguientes son para Bash en Linux; adapta las rutas y permisos a tu NAS.
-
-```bash
-docker --version
-docker compose version
-git clone https://github.com/mateoschreiber/FinApp.git
-cd FinApp
+    UI <== "HTTPS / Sync incremental" ==> Proxy
 ```
 
-Si ya clonaste el repositorio, actualiza tu copia de `main` en lugar de volver a clonarlo. Comprueba primero que no tengas cambios locales que debas conservar.
+---
 
-### 2. Configurar y arrancar
+## Módulos
 
-Elige el nombre que usarás, por ejemplo `finanzas.tudominio.com`, y crea un archivo `.env` en la raíz del proyecto **sustituyendo ese nombre por el tuyo**:
+| Vista | Qué hace |
+| :--- | :--- |
+| **Resumen** | Patrimonio, saldo neto de cuentas/tarjetas, flujo del mes y bandeja de **cambios locales** (pendientes o en conflicto). |
+| **Nuevo movimiento** | Ingresos, gastos, transferencias, pagos de tarjeta y reintegros vinculados al gasto original. |
+| **Créditos** | Compras en cuotas, cierres/vencimientos de tarjeta e imputación de pagos; préstamos con amortización francesa o alemana (`V2` entera exacta). |
+| **Planificación** | Informe mensual, presupuestos por categoría, gastos recurrentes, metas de ahorro, comprobantes (`PNG`/`JPG`/`PDF`) y cierre de revisión mensual. |
+| **Importar y exportar** | Importación XLSX (`Cuentas`, `Categorias`, `Movimientos`) con vista previa, mapeo de referencias y control de diferencias de saldo; conciliación bancaria CSV. |
+| **Configuración** | Alta/archivo de cuentas y categorías, fechas de corte y **administración de usuarios** (visible para administradores). |
 
-```dotenv
-FINAPP_ORIGIN=https://finanzas.tudominio.com
-```
+---
 
-Para HTTPS, la dirección debe coincidir exactamente con la del navegador, incluyendo el puerto si no es el predeterminado y sin barra final. Compose usa este archivo cada vez que ejecutas sus comandos; el archivo está excluido de Git. Si la misma variable existe en tu terminal, tiene prioridad sobre `.env`.
+## Inicio rápido
 
-Para probar solo en este equipo puedes usar `FINAPP_ORIGIN=http://localhost:3000`. El servidor solo acepta `http://` para `localhost`, `127.0.0.1` y `[::1]`; cualquier otra dirección HTTP (IP de la red local, IP pública o dominio) se rechaza al arrancar. El origen debe escribirse como lo envía el navegador: en minúsculas, sin ruta, sin credenciales, sin fragmento y sin puerto por defecto (`:80` o `:443`).
-
-Con un origen HTTP local, puedes usar `localhost` o `127.0.0.1` en el mismo puerto. `[::1]` también se admite si el servicio escucha en IPv6. Cada dirección mantiene su propia sesión y datos sin conexión en el navegador. Usa siempre la misma si ya tienes cambios pendientes. La cookie de sesión conserva `Secure` y `HttpOnly`. Para navegadores que no admitan cookies seguras sobre HTTP local, usa HTTPS.
-
-En la primera ejecución crea el administrador. El nombre es un ejemplo y la contraseña debe tener al menos 12 caracteres. Bash solicita la contraseña sin mostrarla en pantalla:
+### Opción A — Local (Cargo)
 
 ```bash
+export FINAPP_ORIGIN=http://127.0.0.1:3000
 export FINAPP_ADMIN_USERNAME=admin
-read -rsp 'Contraseña del administrador: ' FINAPP_ADMIN_PASSWORD; echo
-export FINAPP_ADMIN_PASSWORD
-export FINAPP_VERSION=$(git -C . rev-parse --short HEAD 2>/dev/null || echo local)
-docker compose config --quiet
-docker compose up -d --build
-docker compose ps
-docker compose logs --tail=50 app
+export FINAPP_ADMIN_PASSWORD=adminhomeadmin
+cargo run --release
 ```
 
-Comprueba que el contenedor siga en ejecución y que no informe errores. La primera construcción puede tardar porque compila Rust. La contraseña y el usuario solo se utilizan para crear el primer administrador en una base vacía; cambiarlos después no cambia la cuenta ya creada. Evita compartir la salida de los comandos si contiene información privada.
+Abre **http://127.0.0.1:3000** e inicia sesión con `admin` / `adminhomeadmin`.
 
-Una vez creado el administrador, retira las credenciales del entorno y recrea el contenedor sin ellas. Conserva `FINAPP_ORIGIN` en `.env`:
+### Opción B — Servidor / NAS (Docker Compose)
+
+1. Crea `.env` con el origen exacto desde el que abrirás la app:
+   ```dotenv
+   FINAPP_ORIGIN=https://finanzas.tudominio.com
+   ```
+2. Arranca por primera vez (inicializa el administrador en una base vacía):
+   ```bash
+   export FINAPP_ADMIN_USERNAME=admin
+   read -rsp 'Contraseña (>= 12 caracteres): ' FINAPP_ADMIN_PASSWORD; echo
+   export FINAPP_ADMIN_PASSWORD
+   export FINAPP_VERSION=$(git rev-parse --short HEAD)
+   docker compose up -d --build
+   ```
+3. Retira las credenciales iniciales del entorno del contenedor:
+   ```bash
+   unset FINAPP_ADMIN_USERNAME FINAPP_ADMIN_PASSWORD
+   docker compose up -d --force-recreate
+   ```
+
+> [!IMPORTANT]
+> La base vive en el volumen `finapp_data`. **Nunca ejecutes `docker compose down -v`** si quieres conservar tus datos.
+
+---
+
+## Variables de entorno
+
+| Variable | Por defecto | Descripción |
+| :--- | :--- | :--- |
+| `FINAPP_ORIGIN` | *(obligatoria)* | Origen permitido (`https://host` o `http://localhost`, `http://127.0.0.1`, `http://[::1]` sin barra final). |
+| `FINAPP_BIND` | `127.0.0.1:3000` | Dirección de escucha (`0.0.0.0:3000` dentro de Docker, publicado solo en `127.0.0.1:3000` del host). |
+| `FINAPP_DB_PATH` | `finapp.sqlite` | Ruta del archivo SQLite (`/data/finapp.sqlite` en Docker). |
+| `FINAPP_ADMIN_USERNAME` | — | Usuario administrador inicial (solo actúa si la tabla `users` está vacía). |
+| `FINAPP_ADMIN_PASSWORD` | — | Contraseña inicial (`12` a `256` caracteres; nunca sobrescribe usuarios existentes). |
+| `FINAPP_VERSION` | `unversioned` | Commit estampado en `sw.js` durante el build para activar la actualización de la PWA. |
+
+---
+
+## Operación y mantenimiento
+
+### Actualizar a la última versión
 
 ```bash
-unset FINAPP_ADMIN_USERNAME FINAPP_ADMIN_PASSWORD
-docker compose up -d --force-recreate
-docker compose ps
+git pull --ff-only
+export FINAPP_VERSION=$(git rev-parse --short HEAD)
+docker compose up -d --build --no-deps app
+curl --fail --silent http://127.0.0.1:3000/health
 ```
 
-Las variables de entorno del contenedor son visibles para quienes pueden administrarlo mediante Docker; restringe ese acceso. La base se guarda en el volumen de Compose `finapp_data`, no dentro de la imagen. **No ejecutes `docker compose down -v` si quieres conservar los datos.**
+### Respaldo, cifrado externo y ensayo de restauración
 
-### 3. Configurar HTTPS y entrar
+```bash
+# 1. Crear instantánea consistente (.sqlite + .sqlite.sha256)
+bash scripts/backup.sh "$HOME/finapp-backups"
 
-Configura el proxy y el DNS local como se explica a continuación. Después abre tu URL HTTPS desde un dispositivo conectado a la misma red e inicia sesión con el administrador. En **Configuración**, crea cuentas y categorías antes de registrar movimientos. Para instalar la PWA en Android, usa la opción de instalación del navegador cuando esté disponible; primero debes acceder por HTTPS confiable.
+# 2. Ensayar restauración en un contenedor aislado sin red
+bash scripts/restore-check.sh "$HOME/finapp-backups/ARCHIVO.sqlite"
 
-Si la página no abre, comprueba `docker compose ps`, los registros con `docker compose logs --tail=100 app`, que el proxy pueda conectar a `127.0.0.1:3000`, que el nombre resuelva a la IP local correcta y que la URL coincida con `FINAPP_ORIGIN`. El servidor expone `GET /health` para comprobaciones locales. Los cambios aún no sincronizados permanecen solo en el dispositivo y no se incluyen en el respaldo del servidor.
+# 3. Cifrar copia para almacenamiento externo
+gpg --symmetric --cipher-algo AES256 "$HOME/finapp-backups/ARCHIVO.sqlite"
+```
 
-El inicio de sesión admite como máximo 20 intentos cada 60 segundos, sumando los de todos los usuarios, existentes o no. Si se superan, durante ese minuto nadie puede entrar, incluido el administrador. Es un límite deliberado: no hay límite por IP porque el proxy local oculta la dirección real del cliente.
-
-### HTTPS con un dominio de Cloudflare
-
-Usa un proxy que corra en el **mismo host** y pueda acceder a `127.0.0.1:3000`. Por ejemplo, instala Caddy con el [módulo DNS de Cloudflare](https://github.com/caddy-dns/cloudflare), que debe estar compilado en el binario: el Caddy estándar no lo incluye. Crea en Cloudflare un token limitado a la zona con permisos `Zone.Zone:Read` y `Zone.DNS:Edit` y entrégalo al proceso Caddy como variable `CF_API_TOKEN`, sin incluirlo en Git ni en el Caddyfile.
-
-Ejemplo de Caddyfile; cambia `finanzas.ejemplo.com` por tu nombre real:
+<details>
+<summary><strong>Proxy HTTPS local con Caddy + Cloudflare DNS</strong></summary>
 
 ```caddyfile
-finanzas.ejemplo.com {
+finanzas.tudominio.com {
     tls {
         dns cloudflare {env.CF_API_TOKEN}
         resolvers 1.1.1.1
@@ -96,72 +134,13 @@ finanzas.ejemplo.com {
 }
 ```
 
-Configura el DNS local o el router para resolver ese nombre a la dirección privada del servidor y verifica que **todos los dispositivos** usan ese DNS. Caddy necesita acceso saliente a Cloudflare y a la autoridad certificadora para crear el registro TXT temporal y renovar el certificado; la validación DNS no requiere puertos entrantes desde Internet. Conserva la configuración y el almacenamiento de certificados de Caddy entre reinicios. Limita el puerto 443 del proxy a la interfaz y a la red local, sin NAT ni reenvío desde el router. Confirma el alcance efectivo de las reglas de red del NAS; el enlace de puertos de Docker puede tener interacciones particulares con el cortafuegos.
+Apunta `finanzas.tudominio.com` en tu DNS local hacia la IP privada del NAS. Los certificados se emiten por desafío DNS sin abrir puertos al exterior.
+</details>
 
-Si el proxy corre en otro contenedor, `127.0.0.1` de ese contenedor no apunta al servidor de la aplicación: utiliza una red Docker privada compartida y el nombre del servicio, y no publiques el puerto de la aplicación. Conserva la misma dirección HTTPS para evitar separar los datos locales de la PWA por origen.
-
-## Respaldo y ensayo de restauración
-
-Los comprobantes se guardan dentro de SQLite y forman parte de la copia. Solo se incluyen datos ya sincronizados con el servidor; los cambios pendientes siguen en los dispositivos. Protege los respaldos como datos financieros privados y copia ambos archivos generados a otro equipo o almacenamiento. El checksum detecta alteraciones accidentales, pero no cifra ni autentica la copia; para eso, cifra la copia externa con `gpg` y guarda la contraseña en un gestor de contraseñas distinto del servidor:
-
-```bash
-gpg --symmetric --cipher-algo AES256 "$HOME/finapp-backups/EL_ARCHIVO.sqlite"
-```
-
-Comprueba que puedes descifrarla en el otro equipo antes de confiar en ella y borra la copia sin cifrar del destino externo:
-
-```bash
-gpg --decrypt EL_ARCHIVO.sqlite.gpg > EL_ARCHIVO.sqlite
-sha256sum -c EL_ARCHIVO.sqlite.sha256
-bash scripts/restore-check.sh EL_ARCHIVO.sqlite
-```
-
-Con el servicio `app` iniciado, en el servidor ejecuta:
-
-```bash
-bash scripts/backup.sh "$HOME/finapp-backups"
-```
-
-El script usa `.backup` de SQLite para crear una instantánea coherente incluso con WAL, comprueba `integrity_check` y compara SHA-256 antes y después de copiarla. Publica un archivo `.sqlite` y otro `.sqlite.sha256` con el mismo nombre y muestra su ruta. Una ejecución fallida devuelve un código distinto de cero; revisa el mensaje y corrígelo. No copies solamente el archivo activo de SQLite y no uses una copia sin su correspondiente checksum.
-
-Si FinApp está definido en otro proyecto Compose, indica su directorio, archivos y servicio. Por ejemplo, con el proyecto en `/srv/finapp` y el servicio `finapp`:
-
-```bash
-FINAPP_COMPOSE_DIR=/srv/finapp \
-COMPOSE_FILE=/srv/finapp/compose.yaml \
-FINAPP_SERVICE=finapp bash scripts/backup.sh "$HOME/respaldos-finapp"
-```
-
-Para ensayar la restauración de un archivo específico, con la imagen `finapp:local` ya construida:
-
-```bash
-bash scripts/restore-check.sh "$HOME/finapp-backups/EL_ARCHIVO.sqlite"
-```
-
-El script comprueba el checksum, restaura en un volumen Docker nuevo, verifica `integrity_check` e inicia un contenedor **sin red ni puertos publicados** para consultar `/health`. El volumen y el contenedor temporales se eliminan al terminar; no se modifica el volumen de la aplicación. El ensayo verifica el arranque y la integridad estructural, pero no sustituye revisar manualmente que los movimientos y comprobantes esperados sean los correctos. Para restaurar producción, detén el servicio y conserva una copia previa, incluidos los archivos WAL/SHM; trabaja sobre un volumen nuevo y verifica los datos antes de ponerlo en uso.
-
-Para ensayar con una imagen candidata, define `FINAPP_RESTORE_IMAGE` con su etiqueta.
-
-### Actualizar FinApp
-
-Después de verificar un respaldo de la base actual y ensayar la imagen candidata en una instancia aislada, actualiza el código local y reconstruye solo FinApp:
-
-```bash
-git -C ~/FinApp pull --ff-only
-export FINAPP_VERSION=$(git -C ~/FinApp rev-parse --short HEAD)
-cd ~/FinApp
-docker compose up -d --build --no-deps app
-curl --fail --silent http://127.0.0.1:3000/health
-```
-
-El comando reconstruye desde `~/FinApp` y conserva el volumen de datos de Compose. `FINAPP_VERSION` estampa el commit dentro del service worker: sin ese paso, los navegadores con la aplicación instalada conservan la versión anterior de la interfaz aunque el servidor ya tenga la nueva. Los dispositivos detectan el cambio al abrir la aplicación y muestran «Aplicar actualización»; la cola de cambios pendientes en IndexedDB se conserva. Prueba la aplicación desde un dispositivo y comprueba los saldos y la sincronización. Si debes volver a una versión anterior a una migración, ensaya esa imagen con el respaldo anterior y monta el volumen restaurado tras verificarlo.
-
-### Programar una copia diaria en Ubuntu
-
-Estos ejemplos usan systemd en el servidor. Sustituye `/srv/FinApp`, `/srv/finapp-backups` y `USUARIO_DOCKER` por rutas absolutas y un usuario autorizado a ejecutar Docker. El acceso a Docker equivale a privilegios elevados; limita quién puede usarlo. El directorio de destino debe estar protegido y tener espacio suficiente. El servicio necesita acceso al `.env` del proyecto, incluido `FINAPP_ORIGIN`; no incluyas contraseñas en los archivos de unidad.
+<details>
+<summary><strong>Respaldo diario automático con systemd</strong></summary>
 
 `/etc/systemd/system/finapp-backup.service`:
-
 ```ini
 [Unit]
 Description=Respaldo SQLite de MisFinanzas
@@ -176,7 +155,6 @@ ExecStart=/usr/bin/bash /srv/FinApp/scripts/backup.sh /srv/finapp-backups
 ```
 
 `/etc/systemd/system/finapp-backup.timer`:
-
 ```ini
 [Unit]
 Description=Respaldo diario de MisFinanzas
@@ -189,6 +167,22 @@ Persistent=true
 WantedBy=timers.target
 ```
 
-Tras crear las unidades, ejecuta `sudo systemctl daemon-reload` y `sudo systemctl enable --now finapp-backup.timer`. Comprueba `systemctl list-timers finapp-backup.timer`, ejecuta una prueba con `sudo systemctl start finapp-backup.service` y revisa `journalctl -u finapp-backup.service -n 50`. `Persistent=true` recupera una ejecución perdida cuando se activa el temporizador. El script no elimina copias antiguas: establece una retención y supervisa el espacio disponible. Sin supervisión y sin copias fuera del servidor, una programación no garantiza recuperación. Si la copia externa debe quedar cifrada, añade el paso de `gpg` de la sección anterior al final de `ExecStart` o encadena un segundo servicio que cifre y copie los archivos nuevos; ensaya el descifrado antes de depender de ello.
+Activar con:
+```bash
+sudo systemctl daemon-reload && sudo systemctl enable --now finapp-backup.timer
+```
+</details>
 
-Fuentes: [respaldo SQLite](https://www.sqlite.org/backup.html), [desafío DNS de Caddy](https://caddyserver.com/docs/automatic-https#dns-challenge) y [publicación de puertos Docker](https://docs.docker.com/reference/compose-file/services/#ports).
+---
+
+## Verificación y desarrollo
+
+```bash
+cargo fmt --check
+cargo clippy --all-targets --locked -- -D warnings
+cargo test --locked
+npm test
+```
+
+- **Releases automáticos**: cada push a `main` que supera CI actualiza el release [`latest`](https://github.com/mateoschreiber/FinApp/releases/tag/latest) con el binario compilado y su checksum SHA-256.
+- **Documentación interna**: [FASES.md](FASES.md) · [AUDITORIA.md](AUDITORIA.md) · [Especificación Fase 1](docs/superpowers/specs/2026-11-14-misfinanzas-fase-1-design.md)
