@@ -47,7 +47,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           SHORT_SHA=$(git rev-parse --short HEAD)
-          sed -i "s/misfinanzas-shell-v7/misfinanzas-shell-${SHORT_SHA}/" static/sw.js
+          sed -i "s/misfinanzas-shell-v8/misfinanzas-shell-${SHORT_SHA}/" static/sw.js
           tar -czf finapp-linux-x86_64.tar.gz -C target/release finapp -C ../.. static
           git checkout -- static/sw.js
           sha256sum finapp-linux-x86_64.tar.gz > finapp-linux-x86_64.tar.gz.sha256

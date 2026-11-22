@@ -1,4 +1,4 @@
-import {element, money, chunkedText} from './ui.mjs';
+import {confirmAction, element, money, chunkedText} from './ui.mjs';
 
 export function enrichCatalog(snapshot) {
   for (const [entity, items] of [['account', snapshot.accounts], ['category', snapshot.categories]]) {
@@ -130,7 +130,7 @@ export function renderData(container, {api, getView, today, synchronize, isCurre
       references.append(element('summary', 'Referencias de movimientos sin resolver (' + report.references.length + ')'));
       const candidates = (getView()?.operations || [])
         .filter(op => op.kind === 'expense' && !op.deleted && !op.pending && !op.conflict)
-        .sort((a, b) => b.date.localeCompare(a.date))
+        .toSorted((a, b) => b.date.localeCompare(a.date))
         .slice(0, 50);
       for (const row of report.references) {
         const caption = element('label', 'Movimiento ' + row.movement_id + ' referencia ' + row.source_id);
@@ -193,8 +193,10 @@ export function renderData(container, {api, getView, today, synchronize, isCurre
     save.type = 'button';
     save.dataset.confirm = '';
     save.disabled = !!report.errors.length || !acked;
-    save.addEventListener('click', () => {
-      if (review && confirm('¿Importar las filas de esta vista previa?')) run(true);
+    save.addEventListener('click', async () => {
+      if (!review || busy) return;
+      const ok = confirmAction('¿Importar las filas de esta vista previa?', 'Importar');
+      if (ok instanceof Promise ? await ok : ok) run(true);
     });
     result.append(save);
   }

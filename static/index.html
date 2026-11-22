@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
   <meta name="theme-color" content="#173f35">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#101b17">
   <link rel="icon" href="/icon-192.png">
@@ -59,7 +60,7 @@
         <a href="#entry" data-tab="entry"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Nuevo</a>
         <a href="#credit" data-tab="credit"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/></svg>Créditos</a>
         <a href="#planning" data-tab="planning"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="15" rx="2"/><path d="M8 3v6M16 3v6M4 11h16"/></svg>Planificación</a>
-        <button id="more-toggle" class="more-toggle" type="button" aria-expanded="false" aria-controls="more-menu">Más</button>
+        <button id="more-toggle" class="more-toggle" type="button" aria-expanded="false" aria-controls="more-menu"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>Más</button>
         <div id="more-menu" class="more-menu" hidden>
           <a href="#settings" data-tab="settings">Configuración</a>
           <a href="#exchange" data-tab="exchange">Importar y exportar</a>
@@ -146,7 +147,7 @@
                 <option value="cash">Efectivo</option><option value="bank">Banco</option>
                 <option value="wallet">Billetera</option><option value="card">Tarjeta de crédito</option>
               </select></label>
-              <label>Saldo inicial en guaraníes<input name="initial_balance" type="number" step="1" value="0" required></label>
+              <label>Saldo inicial en guaraníes<input name="initial_balance" type="number" inputmode="numeric" step="1" value="0" required></label>
               <label>Fecha de corte (opcional)<input name="cutoff_date" type="date"></label>
               <p id="cutoff-help" class="muted">Si indicas una fecha de corte, carga el saldo al inicio de ese día. Los movimientos anteriores quedan en el historial.</p>
               <label>Entidad (opcional)<input name="institution" maxlength="160"></label>
@@ -200,6 +201,14 @@
         <section id="reconciliation" class="workspace-panel"></section>
       </section>
     </div>
+    <dialog id="confirm-dialog" aria-labelledby="confirm-title">
+      <h2 id="confirm-title">Confirmar acción</h2>
+      <p id="confirm-message"></p>
+      <form method="dialog" class="actions">
+        <button value="cancel" class="secondary" autofocus>Cancelar</button>
+        <button value="confirm" id="confirm-accept">Confirmar</button>
+      </form>
+    </dialog>
   </main>
   <script type="module" src="/app.mjs"></script>
 </body>

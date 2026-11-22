@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { calculateBalances, overlayOperations, checkEditBase, setupStep, monthlyTotals, netWorth } from '../static/view-model.mjs';
+import { confirmAction } from '../static/ui.mjs';
 
 test('los totales del mes siguen la semántica del informe del servidor', () => {
   const operations = [
@@ -70,4 +71,42 @@ test('el patrimonio resta la deuda de tarjeta como el informe del servidor', () 
   assert.equal(netWorth(accounts, balances), 700000n);
   assert.equal(netWorth([{id:'card',kind:'card'}], new Map([['card',-300000]])), 300000n);
   assert.equal(netWorth([], new Map()), 0n);
+});
+
+test('confirmAction usa el dialog nativo, resetea returnValue al cerrar y cae en confirm si no hay DOM', async () => {
+  let closeHandler = null;
+  const messageEl = { textContent: '' };
+  const acceptEl = { textContent: '' };
+  const dialog = {
+    returnValue: 'stale',
+    opened: 0,
+    showModal() { this.opened++; },
+    addEventListener(type, fn) { if (type === 'close') closeHandler = fn; },
+  };
+  const prevDoc = globalThis.document;
+  globalThis.document = {
+    getElementById(id) {
+      if (id === 'confirm-dialog') return dialog;
+      if (id === 'confirm-message') return messageEl;
+      if (id === 'confirm-accept') return acceptEl;
+      return null;
+    },
+  };
+  try {
+    const first = confirmAction('¿Eliminar movimiento?', 'Eliminar');
+    assert.equal(dialog.opened, 1);
+    assert.equal(messageEl.textContent, '¿Eliminar movimiento?');
+    assert.equal(acceptEl.textContent, 'Eliminar');
+    assert.equal(dialog.returnValue, '');
+    dialog.returnValue = 'confirm';
+    closeHandler();
+    assert.equal(await first, true);
+    assert.equal(dialog.returnValue, '', 'returnValue se limpia tras cerrar para que Esc no herede confirm');
+
+    const second = confirmAction('¿Cancelar?');
+    closeHandler();
+    assert.equal(await second, false);
+  } finally {
+    globalThis.document = prevDoc;
+  }
 });

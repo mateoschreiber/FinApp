@@ -1,6 +1,6 @@
 # Fases de MisFinanzas — implementadas y pendientes
 
-Fecha: 2026-11-22. Fuentes: `docs/superpowers/plans/2026-11-14-misfinanzas-fase-1.md`, `AUDITORIA.md` (F8.4–F15) y la auditoría actualizada al 2026-11-22 (141 pruebas Rust + 65 JavaScript en verde, `cargo test --locked` y `npm test` con código de salida 0).
+Fecha: 2026-11-22. Fuentes: `docs/superpowers/plans/2026-11-14-misfinanzas-fase-1.md`, `AUDITORIA.md` (F8.4–F16) y la auditoría actualizada al 2026-11-22 (141 pruebas Rust + 66 JavaScript en verde, `cargo test --locked`, `npm test` y `legacy-scan` con código de salida 0).
 
 Criterio de hecho de todo el plan: cada cambio lleva primero una prueba que falla, luego se implementa, y `cargo fmt --check`, `clippy -D warnings`, `cargo test --locked` y `npm test` quedan en verde antes de dar la fase por cerrada.
 
@@ -93,6 +93,13 @@ Reglas de oro de la fase (de la skill): nunca quitar el anillo de foco; objetivo
 - **Importación masiva XLSX (`src/exchange.rs`)**: `prepare_cached`, `fingerprint(row)` calculado una sola vez por fila, caché en memoria de `catalog::cutoff` por cuenta y extracción directa de `DataRef::String`/`SharedString`.
 - **Runtime Tokio (`src/auth.rs`, `src/finance.rs`, `src/planning.rs`, `src/credit.rs`, `src/reconciliation.rs`)**: `Argon2` y handlers que toman `Mutex<Connection>` movidos a `tokio::task::spawn_blocking`.
 - **Evidencia**: `tests/import_integrity.rs` bajó de `31,31 s` a `8,80 s` (~3,5×) y `tests/import_load.rs` (25.000 filas) de `29,15 s` a `7,00 s` (~4,1×). Frontend verificado en Chrome real (`33/33` respuestas HTTP 200, 0 errores de consola).
+
+### F16 — Modernización UX/UI hacia PWA Premium con Modern Web Guidance (ejecutada)
+
+- **Diálogo modal nativo (`dialog`)**: reemplazo de las 9 llamadas a `window.confirm()` en `app.mjs`, `credit.mjs`, `planning.mjs` y `extras.mjs` por un único `<dialog id="confirm-dialog">` en el top-layer (`showModal()`, `<form method="dialog">`, `autofocus` en Cancelar, reset de `returnValue = ''` al cerrar y `overscroll-behavior: contain` en `dialog:modal` y `dialog::backdrop`).
+- **View Transitions y enrutamiento accesible de foco (`same-document-transitions`)**: `tab()` en `static/app.mjs` envuelve el cambio de sección en `document.startViewTransition()` y transfiere el foco al `<h1>` en `transition.finished.finally(...)`, respetando `prefers-reduced-motion: reduce`.
+- **Validación post-interacción y formularios de marca (`validate-input-after-interaction`, `dark-mode`, `brand-consistent-forms`)**: `<meta name="color-scheme" content="light dark">` en `<head>`, `accent-color: var(--accent)` en `:root`, selector `:is(:user-invalid, [aria-invalid="true"])`, errores inline extendidos a todos los formularios en `bindForm()`, e `inputmode="numeric"` en `initial_balance`.
+- **Micro-interacciones táctiles, simetría móvil y ES2023 (`natural-interactions`, `js`)**: ícono SVG en el botón «Más» (`#more-toggle`), `button:active:not(:disabled) { scale: 0.98 }`, `tabular-nums` en celdas de tablas, `.toSorted()` en `credit.mjs`, `planning.mjs` y `extras.mjs` (`0` hallazgos en `legacy-scan`), `manifest.webmanifest` alineado y caché SW `misfinanzas-shell-v8`.
 
 ### P3 — Seguridad (5,5–10 h, parcialmente condicional) — al final por decisión del usuario
 

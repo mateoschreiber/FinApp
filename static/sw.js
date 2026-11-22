@@ -1,4 +1,4 @@
-const CACHE = 'misfinanzas-shell-v7';
+const CACHE = 'misfinanzas-shell-v8';
 const SHELL = [
   '/', '/index.html', '/style.css', '/app.mjs', '/view-model.mjs',
   '/offline-store.mjs', '/sync.mjs', '/ui.mjs', '/extras.mjs', '/credit.mjs',

@@ -5,7 +5,7 @@ import {renderReconciliation} from './reconciliation.mjs';
 import {openUserStore} from './offline-store.mjs';
 import {syncUser} from './sync.mjs';
 import {calculateBalances, overlayOperations, checkEditBase, setupStep, historyPage, monthlyTotals, netWorth} from './view-model.mjs';
-import {element, icon, lastIdentity, money, sessionKey} from './ui.mjs';
+import {confirmAction, element, icon, lastIdentity, money, sessionKey} from './ui.mjs';
 
 const $ = id => document.getElementById(id);
 const fields = id => $(id).elements;
@@ -101,16 +101,25 @@ function showMore(open) {
 
 function tab(name, {navigate = true, focus = true} = {}) {
   if (navigate && sectionFromHash() !== name) history.pushState(null, '', '#' + name);
+  const changed = activeTab !== name;
   activeTab = name;
   const generation = ++tabGeneration;
-  for (const view of document.querySelectorAll('[data-view]')) view.hidden = view.id !== name;
-  for (const link of document.querySelectorAll('[data-tab]')) {
-    if (link.dataset.tab === name) link.setAttribute('aria-current', 'page');
-    else link.removeAttribute('aria-current');
+  const applyDom = () => {
+    for (const view of document.querySelectorAll('[data-view]')) view.hidden = view.id !== name;
+    for (const link of document.querySelectorAll('[data-tab]')) {
+      if (link.dataset.tab === name) link.setAttribute('aria-current', 'page');
+      else link.removeAttribute('aria-current');
+    }
+    $('more-toggle').classList.toggle('current', ['settings','exchange'].includes(name));
+    showMore(false);
+  };
+  if (changed && document.startViewTransition) {
+    const transition = document.startViewTransition(applyDom);
+    if (focus) transition.finished.finally(() => { if (generation === tabGeneration) $(name).querySelector('h1')?.focus(); });
+  } else {
+    applyDom();
+    if (focus) $(name).querySelector('h1')?.focus();
   }
-  $('more-toggle').classList.toggle('current', ['settings','exchange'].includes(name));
-  showMore(false);
-  if (focus) $(name).querySelector('h1')?.focus();
   if (!['credit','planning','exchange'].includes(name) || !user) return;
   const userId = user.id;
   const isCurrent = () => ownsSession(userId) && generation === tabGeneration;
@@ -399,14 +408,14 @@ function renderQueue() {
     row.append(element('strong',item.action === 'delete' ? 'Eliminar movimiento' : describe(item.data)));
     const actions = element('div',null,'actions');
     const hasDependents = queue.some(op => op.dependsOn === item.id);
-    const discard = () => confirm(hasDependents
+    const discard = () => confirmAction(hasDependents
       ? '¿Descartar este cambio y los cambios locales posteriores sobre el mismo movimiento?'
-      : '¿Descartar este cambio local?');
+      : '¿Descartar este cambio local?', 'Descartar');
     if (item.status === 'conflict') {
       row.classList.add('conflict');
       row.append(element('p','Versión del servidor · '+(item.server ? describe(item.server) : 'Movimiento inexistente')));
       const resolve = async choice => {
-        if (hasDependents && !discard()) return;
+        if (hasDependents && !(await discard())) return;
         await changeQueue(local => choice === 'server'
           ? local.acceptServer(item.id,{discardDependents:hasDependents})
           : local.resolveConflict(item.id,{
@@ -426,7 +435,7 @@ function renderQueue() {
         actions.append(button('Reintentar',() => changeQueue(local => local.retryRejected(item.id))));
       }
       actions.append(button('Descartar cambio',async () => {
-        if (discard()) await changeQueue(local => local.discardOperation(item.id,{discardDependents:hasDependents}));
+        if (await discard()) await changeQueue(local => local.discardOperation(item.id,{discardDependents:hasDependents}));
       }));
       pending.append(row);
     }
@@ -518,7 +527,7 @@ function edit(op, rejectedId = null) {
 }
 async function remove(op) {
   const editTail = tail(op.id)?.id ?? null;
-  if (!confirm('¿Eliminar este movimiento?')) return;
+  if (!(await confirmAction('¿Eliminar este movimiento?', 'Eliminar'))) return;
   await changeQueue(async local => {
     queue = await local.pending();
     const previous = tail(op.id);
@@ -606,24 +615,22 @@ function clearSession() {
 
 function bindForm(id, run, {onError = showError, onBusy} = {}) {
   const form = $(id);
-  if (id === 'movement-form' || id === 'login-form') {
-    const clear = field => {
-      if (!field.hasAttribute('aria-errormessage')) return;
-      $(field.getAttribute('aria-errormessage'))?.remove();
-      field.removeAttribute('aria-errormessage');
-      field.removeAttribute('aria-invalid');
-    };
-    form.addEventListener('invalid',({target:field}) => {
-      clear(field);
-      const error = element('span',field.validationMessage,'field-error');
-      error.id = id + '-' + field.name + '-error';
-      field.after(error);
-      field.setAttribute('aria-invalid','true');
-      field.setAttribute('aria-errormessage',error.id);
-    },true);
-    form.addEventListener('input',({target:field}) => clear(field));
-    form.addEventListener('reset',() => Array.from(form.elements).forEach(clear));
-  }
+  const clear = field => {
+    if (!field?.hasAttribute?.('aria-errormessage')) return;
+    $(field.getAttribute('aria-errormessage'))?.remove();
+    field.removeAttribute('aria-errormessage');
+    field.removeAttribute('aria-invalid');
+  };
+  form.addEventListener('invalid',({target:field}) => {
+    clear(field);
+    const error = element('span',field.validationMessage,'field-error');
+    error.id = id + '-' + field.name + '-error';
+    field.after(error);
+    field.setAttribute('aria-invalid','true');
+    field.setAttribute('aria-errormessage',error.id);
+  },true);
+  form.addEventListener('input',({target:field}) => clear(field));
+  form.addEventListener('reset',() => Array.from(form.elements).forEach(clear));
   form.addEventListener('submit', async event => {
     event.preventDefault();
     const submit = form.querySelector('button:not([type="button"])');
@@ -715,7 +722,7 @@ $('logout').addEventListener('click',async () => {
     await navigator.locks.request('misfinanzas-sync:'+id,async () => {
       if (!ownsSession(id) || local !== store) return;
       const remaining = await local.pending();
-      if (remaining.length && !confirm('Hay cambios locales sin sincronizar. ¿Descartarlos y cerrar la sesión?')) return;
+      if (remaining.length && !(await confirmAction('Hay cambios locales sin sincronizar. ¿Descartarlos y cerrar la sesión?', 'Cerrar sesión'))) return;
       await api('/api/logout','POST',{});
       await local.clear({discardPending:remaining.length > 0});
       localStorage.removeItem(sessionKey);
@@ -868,7 +875,7 @@ if ('serviceWorker' in navigator) {
       if (!registration.waiting) return;
       // Pending edits live in IndexedDB and survive the reload; confirm so the user picks the moment.
       const pending = store ? await store.pending().catch(() => []) : [];
-      if (pending.length && !confirm('Hay cambios sin sincronizar. Se conservarán después de actualizar. ¿Continuar?')) return;
+      if (pending.length && !(await confirmAction('Hay cambios sin sincronizar. Se conservarán después de actualizar. ¿Continuar?', 'Actualizar'))) return;
       navigator.serviceWorker.addEventListener('controllerchange',() => location.reload(),{once:true});
       registration.waiting.postMessage('ACTIVATE_UPDATE');
     });

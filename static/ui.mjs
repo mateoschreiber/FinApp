@@ -58,3 +58,17 @@ export function icon(name) {
   svg.innerHTML = ICONS[name];
   return svg;
 }
+
+export function confirmAction(message, acceptLabel = 'Confirmar') {
+  const dialog = globalThis.document?.getElementById?.('confirm-dialog');
+  if (!dialog?.showModal) return globalThis.confirm ? globalThis.confirm(message) : true;
+  document.getElementById('confirm-message').textContent = message;
+  document.getElementById('confirm-accept').textContent = acceptLabel;
+  dialog.returnValue = '';
+  dialog.showModal();
+  return new Promise(resolve => dialog.addEventListener('close', () => {
+    const accepted = dialog.returnValue === 'confirm';
+    dialog.returnValue = '';
+    resolve(accepted);
+  }, {once: true}));
+}

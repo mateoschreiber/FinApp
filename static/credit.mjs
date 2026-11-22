@@ -1,4 +1,4 @@
-import {element as el, money, field, lastIdentity} from './ui.mjs';
+import {confirmAction, element as el, money, field, lastIdentity} from './ui.mjs';
 
 // Dates are stored as civil dates in Paraguay. UTC arithmetic avoids DST shifts.
 function dayOfMonth(month, day, offset = 0) {
@@ -31,7 +31,7 @@ export function creditProjection(view, portfolio, month) {
   for (const loan of portfolio.loans) {
     if (loan.draw_date>end) continue;
     let capitalPaid=0n, interestPaid=0n, settled=null;
-    for (const p of [...loan.payments].sort((a,b)=>a.date.localeCompare(b.date))) {
+    for (const p of loan.payments.toSorted((a,b)=>a.date.localeCompare(b.date))) {
       if (p.date>end) break;
       capitalPaid+=BigInt(p.principal); interestPaid+=BigInt(p.interest);
       if (!settled && capitalPaid===BigInt(loan.principal)) settled=p.date;
@@ -161,7 +161,9 @@ export async function renderCredit(container, ctx) {
     let last=null;
     button.addEventListener('click',async()=>{
       if (!current() || button.disabled) return;
-      if (!confirm(question)) return;
+      const ok = confirmAction(question, label);
+      if (!(ok instanceof Promise ? await ok : ok)) return;
+      if (!current() || button.disabled) return;
       button.disabled=true;
       try {
         const identity=lastIdentity();
@@ -182,7 +184,6 @@ export async function renderCredit(container, ctx) {
   cardsPanel.append(el('h2','Tarjetas y vencimientos'));
   container.append(cardsPanel);
   const statement=section(cardsPanel,'Resumen de tarjeta');
-  statement.open=true;
   statement.open=true;
   if (view.operations.some(o=>o.pending || o.conflict)) statement.append(el('p','Sincroniza los cambios pendientes para incluirlos en el resumen.'));
   if (cards.length) {

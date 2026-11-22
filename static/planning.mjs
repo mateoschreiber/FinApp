@@ -1,5 +1,5 @@
 import {creditProjection} from './credit.mjs';
-import {element as node, money as formatMoney, field, chunkedText} from './ui.mjs';
+import {confirmAction, element as node, money as formatMoney, field, chunkedText} from './ui.mjs';
 
 const byId = items => new Map(items.map(item => [item.id, item.name]));
 const kinds = {income:'Ingreso', expense:'Gasto', payment:'Pago de tarjeta', transfer:'Transferencia', refund:'Devolución'};
@@ -78,7 +78,7 @@ export async function renderPlanning(container, {api, getView, today, isCurrent,
     const liquid=view.accounts.filter(a=>a.kind!=='card' && !a.archived);
     const expenses=view.categories.filter(c=>c.kind==='expense' && !c.archived);
     const save=v=>run(()=>api('/api/planning','POST',v));
-    const removePlan=(kind,id)=>action('Quitar',()=>{if(confirm('¿Quitar esta planificación?'))save({kind,id});});
+    const removePlan=(kind,id)=>action('Quitar',async()=>{if(await confirmAction('¿Quitar esta planificación?','Quitar'))save({kind,id});});
     const totals=section(body,'Resultado del mes');
     totals.classList.add('report-overview');
     const figures=node('dl',null,'report-figures');
@@ -116,7 +116,7 @@ export async function renderPlanning(container, {api, getView, today, isCurrent,
     const budgets=section(body,'Presupuestos del mes');
     table(budgets,['Categoría','Presupuesto','Gastado','Disponible',''],report.budgets.map(b=>{
       const spent=BigInt(report.categories[b.category_id]||0);
-      return [categories.get(b.category_id)||b.category_id,formatMoney(b.amount),formatMoney(spent),formatMoney(BigInt(b.amount)-spent),action('Quitar',()=>{if(confirm('¿Quitar el presupuesto del mes?'))save({kind:'remove_budget',month:report.month,category_id:b.category_id});})];
+      return [categories.get(b.category_id)||b.category_id,formatMoney(b.amount),formatMoney(spent),formatMoney(BigInt(b.amount)-spent),action('Quitar',async()=>{if(await confirmAction('¿Quitar el presupuesto del mes?','Quitar'))save({kind:'remove_budget',month:report.month,category_id:b.category_id});})];
     }));
     if(expenses.length) {
       const f=newForm(budgets,'Definir o actualizar presupuesto',v=>save({kind:'budget',month:report.month,...v,amount:Number(v.amount)}));
@@ -169,7 +169,7 @@ export async function renderPlanning(container, {api, getView, today, isCurrent,
       recurringForm=f;
     }
     const receipts=section(body,'Comprobantes');
-    const movements=[...report.operations].sort((a,b)=>b.date.localeCompare(a.date));
+    const movements=report.operations.toSorted((a,b)=>b.date.localeCompare(a.date));
     const opName=op=>[op.date,op.description || kinds[op.kind] || op.kind,formatMoney(op.amount)].join(' · ');
     const names=new Map(movements.map(op=>[op.id,opName(op)]));
     table(receipts,['Movimiento','Archivo',''],report.receipts.map(r=>{
@@ -181,7 +181,7 @@ export async function renderPlanning(container, {api, getView, today, isCurrent,
           setTimeout(()=>URL.revokeObjectURL(url),60000);
         } catch(e){error(e);}
       });
-      return [names.get(r.operation_id)||r.operation_id,link,action('Eliminar',()=>{if(confirm('¿Eliminar este comprobante?'))run(()=>api('/api/receipts/'+r.id,'DELETE',{}));})];
+      return [names.get(r.operation_id)||r.operation_id,link,action('Eliminar',async()=>{if(await confirmAction('¿Eliminar este comprobante?','Eliminar'))run(()=>api('/api/receipts/'+r.id,'DELETE',{}));})];
     }));
     if(movements.length) {
       const form=node('form');

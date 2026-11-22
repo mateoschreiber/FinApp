@@ -679,3 +679,17 @@ Solo visual: iconos SVG propios, micro-movimiento con significado y jerarquía r
 - `cargo fmt --check` y `cargo clippy --all-targets --locked -- -D warnings` limpios.
 - `cargo test --locked`: **141 pruebas Rust** en verde. En perfil `test` (debug), `tests/import_integrity.rs` (39 pruebas) bajó de **31,31 s** a **8,80 s** (~3,5×) y `tests/import_load.rs` (25.000 filas) de **29,15 s** a **7,00 s** (~4,1×).
 - Verificación en Chrome real (`http://127.0.0.1:3099/`): carga inicial (`17/17` activos en 200), login, navegación por `Resumen`, `Nuevo`, `Créditos`, `Planificación` y `Configuración`, creación de cuenta y sincronización incremental (`33/33` peticiones HTTP 200, 0 errores en consola).
+
+## F16 — Modernización UX/UI hacia PWA Premium (Modern Web Guidance)
+
+### Cambios aplicados
+
+- **Diálogo modal nativo (`static/index.html`, `static/style.css`, `static/ui.mjs`)**: reemplazo de `window.confirm()` en 9 flujos destructivos por `<dialog id="confirm-dialog" aria-labelledby="confirm-title">` abierto con `showModal()`, `autofocus` en la acción segura (`Cancelar`), lectura y limpieza de `dialog.returnValue = ''` en el evento `close`, y `overscroll-behavior: contain` en `dialog:modal` y `dialog::backdrop`.
+- **View Transitions API (`static/app.mjs`, `static/style.css`)**: transición entre secciones (`[data-view]`) con `document.startViewTransition()` y enrutamiento de foco al `<h1>` dentro de `transition.finished.finally()`, con desactivación de pseudoelementos `::view-transition-*` bajo `prefers-reduced-motion: reduce`.
+- **Formularios, Dark Mode y Manifest (`static/index.html`, `static/style.css`, `static/manifest.webmanifest`)**: `<meta name="color-scheme" content="light dark">` en `<head>`, `accent-color: var(--accent)` en `:root`, `:is(:user-invalid, [aria-invalid="true"])`, validación inline extendida a todos los formularios en `bindForm()`, `inputmode="numeric"` en `initial_balance`, ícono SVG en `#more-toggle` («Más»), `scale: 0.98` en `:active`, `tabular-nums` en tablas y unificación de colores en `manifest.webmanifest`.
+- **Modernización ES2023 (`static/credit.mjs`, `static/planning.mjs`, `static/extras.mjs`)**: reemplazo de copias `[...arr].sort()` por `.toSorted()` y eliminación de asignación duplicada en `credit.mjs`.
+
+### Validación F16
+
+- `npx modern-web-guidance@latest legacy-scan static --json`: **0 hallazgos** en 38 guías (52 reglas).
+- `npm test`: **66/66 pruebas JS** en verde (incluyendo la nueva prueba unitaria de `confirmAction` con `<dialog>` y el bump de `sw.js` a `misfinanzas-shell-v8`).
