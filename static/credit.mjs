@@ -266,6 +266,8 @@ export async function renderCredit(container, ctx) {
         history.append(line);
         action(line,'Anular pago','Quita este pago y restaura el capital pendiente del préstamo. ¿Continuar?',()=>({kind:'cancel_repayment',repayment_id:p.id}));
       }
+    } else {
+      action(panel,'Anular préstamo','Se anula el préstamo y el desembolso inicial en la cuenta. ¿Continuar?',()=>({kind:'cancel_loan',loan_id:loan.id}));
     }
     if(accounts.length) {
       const f=form(panel,'Registrar pago',v=>({kind:'repayment',loan_id:loan.id,account_id:v.account_id,date:v.date,principal:Number(v.principal),interest:Number(v.interest),fee:Number(v.fee),category_id:v.category_id||null}));

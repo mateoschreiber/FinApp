@@ -1333,3 +1333,50 @@ async fn b07_v1_and_v2_loans_both_accept_payments_and_cancellations() {
     );
     f.integrity();
 }
+
+#[tokio::test]
+async fn b08_cancel_loan_removes_unpaid_loan_and_draw_while_rejecting_loans_with_payments() {
+    let f = Fixture::new().await;
+    f.account(&f.admin.id, "bank", "bank", 0);
+    let loan_id = create_loan(&f, &f.admin, 1000).await;
+    assert_eq!(f.balance(&f.admin.id, "bank"), 1000);
+
+    let (status, payment_id) = f
+        .send_new(&f.admin, repayment(&loan_id, 200, 0, 0, None))
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    // Cannot cancel a loan that has active repayments.
+    let cancel_loan = json!({"kind":"cancel_loan","loan_id":loan_id});
+    let (status, _) = f.send_new(&f.admin, cancel_loan.clone()).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // Cancel the repayment first, then cancel the loan.
+    let (status, _) = f
+        .send_new(
+            &f.admin,
+            json!({"kind":"cancel_repayment","repayment_id":payment_id}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+
+    let req_id = uuid::Uuid::new_v4().to_string();
+    assert_eq!(
+        f.send(&f.admin, cancel_loan.clone(), &req_id).await,
+        StatusCode::NO_CONTENT
+    );
+    // Replay is idempotent.
+    assert_eq!(
+        f.send(&f.admin, cancel_loan, &req_id).await,
+        StatusCode::NO_CONTENT
+    );
+
+    assert_eq!(f.balance(&f.admin.id, "bank"), 0);
+    assert!(
+        f.portfolio(&f.admin).await["loans"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    f.integrity();
+}

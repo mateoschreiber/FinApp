@@ -174,3 +174,14 @@ test('G: corrupted localStorage degrades to the session message', async () => {
     globalThis.localStorage = original;
   }
 });
+
+test('H: unpaid loan renders Anular préstamo action and posts cancel_loan', async () => {
+  const h = harness(() => {});
+  await renderCredit(h.container, h.ctx);
+  const cancelBtn = h.container.all(n => n.tag === 'button' && n.textContent === 'Anular préstamo')[0];
+  assert.ok(cancelBtn, 'Anular préstamo button is rendered for a loan without payments');
+  cancelBtn.dispatch('click');
+  await settle();
+  assert.equal(h.posts.length, 1);
+  assert.deepEqual(h.posts[0].entry, { kind: 'cancel_loan', loan_id: 'loan1' });
+});

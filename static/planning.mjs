@@ -114,17 +114,22 @@ export async function renderPlanning(container, {api, getView, today, isCurrent,
       totals.append(node('h3','Gastos netos por categoría'),chart);
     }
     const budgets=section(body,'Presupuestos del mes');
+    let budgetForm;
     table(budgets,['Categoría','Presupuesto','Gastado','Progreso','Disponible',''],report.budgets.map(b=>{
       const spent=BigInt(report.categories[b.category_id]||0);
       const pct=b.amount>0?Number(spent*100n/BigInt(b.amount)):0;
       const cell=node('div',null,'progress-cell');
       cell.append(node('span',pct+'%'),progressBar(pct,pct>100?'over':pct>=80?'warn':''));
-      return [categories.get(b.category_id)||b.category_id,formatMoney(b.amount),formatMoney(spent),cell,formatMoney(BigInt(b.amount)-spent),action('Quitar',async()=>{if(await confirmAction('¿Quitar el presupuesto del mes?','Quitar'))save({kind:'remove_budget',month:report.month,category_id:b.category_id});})];
+      const actions=node('div',null,'actions');
+      if (expenses.length) actions.append(action('Editar',() => openForEdit(budgetForm,b,'amount')));
+      actions.append(action('Quitar',async()=>{if(await confirmAction('¿Quitar el presupuesto del mes?','Quitar'))save({kind:'remove_budget',month:report.month,category_id:b.category_id});}));
+      return [categories.get(b.category_id)||b.category_id,formatMoney(b.amount),formatMoney(spent),cell,formatMoney(BigInt(b.amount)-spent),actions];
     }));
     if(expenses.length) {
       const f=newForm(budgets,'Definir o actualizar presupuesto',v=>save({kind:'budget',month:report.month,...v,amount:Number(v.amount)}));
       field(f.form,'Categoría','category_id','select',{items:expenses});
       field(f.form,'Límite en guaraníes','amount','number',{min:1,step:1}); f.end();
+      budgetForm=f;
     } else budgets.append(node('p','Crea una categoría de gasto en Configuración.'));
     const goals=section(body,'Objetivos de ahorro');
     let goalForm;
@@ -219,10 +224,10 @@ export async function renderPlanning(container, {api, getView, today, isCurrent,
   controls.append(action('Actualizar informe',() => run(synchronize)));await refresh();
 }
 
-function openForEdit(target, record) {
+function openForEdit(target, record, focusField = 'name') {
   target.details.open=true;
   for (const input of target.form.elements) {
     if (input.name in record) input.value=record[input.name] ?? '';
   }
-  target.form.elements.name.focus();
+  target.form.elements[focusField]?.focus();
 }

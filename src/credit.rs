@@ -55,6 +55,9 @@ enum Entry {
     CancelRepayment {
         repayment_id: String,
     },
+    CancelLoan {
+        loan_id: String,
+    },
 }
 #[derive(Debug, Serialize, Deserialize)]
 struct Command {
@@ -531,6 +534,38 @@ fn mutate(db: &Database, user: &str, command: &Command) -> Result<()> {
             tx.execute(
                 "DELETE FROM credit_repayments WHERE user_id=?1 AND id=?2",
                 params![user, repayment_id],
+            )
+            .map_err(database)?;
+        }
+        Entry::CancelLoan { loan_id } => {
+            require(finance::id_ok(loan_id))?;
+            let registered: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM credit_loans WHERE user_id=?1 AND id=?2)",
+                    params![user, loan_id],
+                    |r| r.get(0),
+                )
+                .map_err(database)?;
+            if !registered {
+                return Err(StatusCode::NOT_FOUND);
+            }
+            let has_repayments: bool = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM credit_repayments WHERE user_id=?1 AND loan_id=?2)",
+                    params![user, loan_id],
+                    |r| r.get(0),
+                )
+                .map_err(database)?;
+            require(!has_repayments)?;
+            let draw_id = format!("loan:{loan_id}:draw");
+            if let Some(op) = operation(&tx, user, &draw_id)?
+                && !op.deleted
+            {
+                cancel(&tx, user, &draw_id, op.version)?;
+            }
+            tx.execute(
+                "DELETE FROM credit_loans WHERE user_id=?1 AND id=?2",
+                params![user, loan_id],
             )
             .map_err(database)?;
         }

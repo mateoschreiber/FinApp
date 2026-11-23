@@ -2,10 +2,10 @@
 use crate::{AppState, auth, catalog, db::Database};
 use axum::{
     Json, Router,
-    extract::{Query, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
 };
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
@@ -178,6 +178,30 @@ pub(crate) fn save_account_in(tx: &Connection, user: &str, value: &Account) -> R
     validate_balance(tx, user, &value.id)?;
     changed(tx, user, "account", &value.id)
 }
+pub(crate) fn account_in_use(conn: &Connection, user: &str, id: &str) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM finance_operations WHERE user_id=?1 AND (account_id=?2 OR card_account_id=?2 OR destination_account_id=?2)
+            UNION ALL SELECT 1 FROM credit_loans WHERE user_id=?1 AND account_id=?2
+            UNION ALL SELECT 1 FROM planning_goals WHERE user_id=?1 AND account_id=?2
+            UNION ALL SELECT 1 FROM planning_recurring WHERE user_id=?1 AND account_id=?2
+            UNION ALL SELECT 1 FROM reconciliation_lines WHERE user_id=?1 AND account_id=?2
+        )",
+        params![user, id],
+        |r| r.get(0),
+    )
+}
+pub(crate) fn category_in_use(conn: &Connection, user: &str, id: &str) -> rusqlite::Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(
+            SELECT 1 FROM finance_operations WHERE user_id=?1 AND category_id=?2
+            UNION ALL SELECT 1 FROM planning_budgets WHERE user_id=?1 AND category_id=?2
+            UNION ALL SELECT 1 FROM planning_recurring WHERE user_id=?1 AND category_id=?2
+        )",
+        params![user, id],
+        |r| r.get(0),
+    )
+}
 pub(crate) fn upsert_account_in(tx: &Connection, user: &str, value: &Account) -> Result<(), Error> {
     if !id_ok(&value.id)
         || !name_ok(&value.name)
@@ -193,10 +217,16 @@ pub(crate) fn upsert_account_in(tx: &Connection, user: &str, value: &Account) ->
             |r| r.get(0),
         )
         .optional()?;
-    if previous.as_ref().is_some_and(|v| v != &value.kind) {
+    if previous.as_ref().is_some_and(|v| v != &value.kind) && account_in_use(tx, user, &value.id)? {
         return Err(Error::Invalid);
     }
-    tx.execute("INSERT INTO finance_accounts VALUES(?1,?2,?3,?4,?5) ON CONFLICT(user_id,id) DO UPDATE SET name=excluded.name,initial_balance=excluded.initial_balance",params![user,value.id,value.name,value.kind,value.initial_balance])?;
+    tx.execute("INSERT INTO finance_accounts VALUES(?1,?2,?3,?4,?5) ON CONFLICT(user_id,id) DO UPDATE SET name=excluded.name,kind=excluded.kind,initial_balance=excluded.initial_balance",params![user,value.id,value.name,value.kind,value.initial_balance])?;
+    if value.kind != "card" {
+        tx.execute(
+            "UPDATE catalog_details SET closing_day=NULL,due_day=NULL WHERE user_id=?1 AND entity='account' AND id=?2",
+            params![user, value.id],
+        )?;
+    }
     Ok(())
 }
 pub fn save_category(db: &Database, user: &str, value: &Category) -> Result<(), Error> {
@@ -220,10 +250,12 @@ pub(crate) fn save_category_in(
             |r| r.get(0),
         )
         .optional()?;
-    if previous.as_ref().is_some_and(|v| v != &value.kind) {
+    if previous.as_ref().is_some_and(|v| v != &value.kind)
+        && category_in_use(conn, user, &value.id)?
+    {
         return Err(Error::Invalid);
     }
-    conn.execute("INSERT INTO finance_categories VALUES(?1,?2,?3,?4) ON CONFLICT(user_id,id) DO UPDATE SET name=excluded.name",params![user,value.id,value.name,value.kind])?;
+    conn.execute("INSERT INTO finance_categories VALUES(?1,?2,?3,?4) ON CONFLICT(user_id,id) DO UPDATE SET name=excluded.name,kind=excluded.kind",params![user,value.id,value.name,value.kind])?;
     changed(conn, user, "category", &value.id)
 }
 pub(crate) fn valid_date(s: &str) -> bool {
@@ -703,11 +735,112 @@ async fn post_operation(
     .await
     .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
+fn delete_catalog_entity(
+    db: &Database,
+    user: &str,
+    entity: &'static str,
+    id: &str,
+) -> Result<(), (StatusCode, &'static str)> {
+    let internal = |_: rusqlite::Error| (StatusCode::INTERNAL_SERVER_ERROR, "");
+    let mut conn =
+        db.0.lock()
+            .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, ""))?;
+    let tx = conn.transaction().map_err(internal)?;
+    let (table, in_use, conflict_msg) = if entity == "account" {
+        (
+            "finance_accounts",
+            account_in_use(&tx, user, id).map_err(internal)?,
+            "La cuenta tiene movimientos o registros vinculados. Archívala para conservar el historial.",
+        )
+    } else {
+        (
+            "finance_categories",
+            category_in_use(&tx, user, id).map_err(internal)?,
+            "La categoría tiene movimientos o presupuestos vinculados. Archívala para conservar el historial.",
+        )
+    };
+    let exists: bool = tx
+        .query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE user_id=?1 AND id=?2)"),
+            params![user, id],
+            |r| r.get(0),
+        )
+        .map_err(internal)?;
+    if !exists {
+        return Err((StatusCode::NOT_FOUND, ""));
+    }
+    if in_use {
+        return Err((StatusCode::CONFLICT, conflict_msg));
+    }
+    tx.execute(
+        "DELETE FROM catalog_details WHERE user_id=?1 AND entity=?2 AND id=?3",
+        params![user, entity, id],
+    )
+    .map_err(internal)?;
+    tx.execute(
+        "DELETE FROM import_sources WHERE user_id=?1 AND entity=?2 AND target_id=?3",
+        params![user, entity, id],
+    )
+    .map_err(internal)?;
+    tx.execute(
+        "DELETE FROM finance_changes WHERE user_id=?1 AND entity=?2 AND id=?3",
+        params![user, entity, id],
+    )
+    .map_err(internal)?;
+    tx.execute(
+        &format!("DELETE FROM {table} WHERE user_id=?1 AND id=?2"),
+        params![user, id],
+    )
+    .map_err(internal)?;
+    tx.execute("UPDATE sync_epoch SET id=lower(hex(randomblob(16)))", [])
+        .map_err(internal)?;
+    tx.commit().map_err(internal)
+}
+async fn delete_account(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    tokio::task::spawn_blocking(move || {
+        let u = match bound_user(&s.db, &h) {
+            Ok(u) => u,
+            Err(e) => return e.into_response(),
+        };
+        match delete_catalog_entity(&s.db, &u.id, "account", &id) {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err((code, "")) => code.into_response(),
+            Err((code, msg)) => (code, msg).into_response(),
+        }
+    })
+    .await
+    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+async fn delete_category(
+    State(s): State<AppState>,
+    h: HeaderMap,
+    Path(id): Path<String>,
+) -> Response {
+    tokio::task::spawn_blocking(move || {
+        let u = match bound_user(&s.db, &h) {
+            Ok(u) => u,
+            Err(e) => return e.into_response(),
+        };
+        match delete_catalog_entity(&s.db, &u.id, "category", &id) {
+            Ok(()) => StatusCode::NO_CONTENT.into_response(),
+            Err((code, "")) => code.into_response(),
+            Err((code, msg)) => (code, msg).into_response(),
+        }
+    })
+    .await
+    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/snapshot", get(get_snapshot))
         .route("/api/accounts", post(post_account))
+        .route("/api/accounts/{id}", delete(delete_account))
         .route("/api/categories", post(post_category))
+        .route("/api/categories/{id}", delete(delete_category))
         .route("/api/operations", post(post_operation))
 }
 

@@ -487,3 +487,145 @@ fn invalid_calendar_date_and_mismatched_category_cannot_be_recorded() {
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn unused_accounts_and_categories_can_change_kind_and_be_deleted_while_used_ones_conflict() {
+    use http_body_util::BodyExt;
+    let db = Database::open_memory().unwrap();
+    db.bootstrap_admin("admin", "password-1234").unwrap();
+    let app = finapp::app(db.clone(), "https://finanzas.example".to_owned());
+    let login = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/api/login")
+                .header("content-type", "application/json")
+                .header("origin", "https://finanzas.example")
+                .body(Body::from(
+                    r#"{"username":"admin","password":"password-1234"}"#,
+                ))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let cookie = login
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let login_body: serde_json::Value =
+        serde_json::from_slice(&login.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let user_id = login_body["id"].as_str().unwrap().to_owned();
+
+    let call = |method: &str, path: &str, body: &str| {
+        let app = app.clone();
+        let cookie = cookie.clone();
+        let user_id = user_id.clone();
+        let method = method.to_owned();
+        let path = path.to_owned();
+        let body = body.to_owned();
+        async move {
+            let mut req = Request::builder()
+                .method(method.as_str())
+                .uri(path.as_str())
+                .header("cookie", &cookie)
+                .header("x-finapp-user", &user_id);
+            if method != "GET" {
+                req = req
+                    .header("origin", "https://finanzas.example")
+                    .header("content-type", "application/json");
+            }
+            app.oneshot(req.body(Body::from(body)).unwrap())
+                .await
+                .unwrap()
+        }
+    };
+
+    // Create account as cash, then change its kind to bank while unused, then delete it.
+    assert_eq!(
+        call(
+            "POST",
+            "/api/accounts",
+            r#"{"id":"temp-acc","name":"Temporal","kind":"cash","initial_balance":0}"#,
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            "POST",
+            "/api/accounts",
+            r#"{"id":"temp-acc","name":"Temporal Banco","kind":"bank","initial_balance":0}"#,
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        call("DELETE", "/api/accounts/temp-acc", "{}")
+            .await
+            .status(),
+        StatusCode::NO_CONTENT
+    );
+
+    // Create used account and category; deletion must return 409 Conflict and kind change 400.
+    assert_eq!(
+        call(
+            "POST",
+            "/api/accounts",
+            r#"{"id":"used-acc","name":"Uso","kind":"bank","initial_balance":1000}"#,
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            "POST",
+            "/api/categories",
+            r#"{"id":"used-cat","name":"Comida","kind":"expense"}"#,
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(
+            "POST",
+            "/api/operations",
+            r#"{"request_id":"req-1","id":"op-1","expected_version":0,"deleted":false,"kind":"expense","account_id":"used-acc","category_id":"used-cat","amount":500,"date":"2026-11-15"}"#,
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        call("DELETE", "/api/accounts/used-acc", "{}")
+            .await
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        call("DELETE", "/api/categories/used-cat", "{}")
+            .await
+            .status(),
+        StatusCode::CONFLICT
+    );
+    assert_eq!(
+        call(
+            "POST",
+            "/api/accounts",
+            r#"{"id":"used-acc","name":"Uso","kind":"cash","initial_balance":1000}"#,
+        )
+        .await
+        .status(),
+        StatusCode::BAD_REQUEST
+    );
+}

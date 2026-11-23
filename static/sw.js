@@ -1,14 +1,16 @@
 const CACHE = 'misfinanzas-shell-v9';
 const SHELL = [
   '/', '/index.html', '/style.css', '/app.mjs', '/view-model.mjs',
-  '/offline-store.mjs', '/sync.mjs', '/ui.mjs', '/extras.mjs', '/credit.mjs',
+  '/offline-store.mjs', '/sync.mjs', '/ui.mjs', '/visuals.mjs', '/extras.mjs', '/credit.mjs',
   '/planning.mjs', '/reconciliation.mjs', '/manifest.webmanifest', '/icon-192.png', '/icon-512.png',
   '/fonts/ibm-plex-sans.woff2', '/fonts/source-serif-4.woff2', '/login-art.webp',
 ];
 
 self.addEventListener('install', event => {
-  event.waitUntil(caches.open(CACHE).then(cache =>
-    cache.addAll(SHELL.map(path => new Request(path, {cache:'reload'})))));
+  event.waitUntil(caches.open(CACHE).then(async cache => {
+    await cache.addAll(SHELL.map(path => new Request(path, {cache:'reload'})));
+    await self.skipWaiting?.();
+  }));
 });
 self.addEventListener('message', event => {
   if (event.data === 'ACTIVATE_UPDATE') event.waitUntil(self.skipWaiting());

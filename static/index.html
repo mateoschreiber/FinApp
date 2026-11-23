@@ -4,8 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#ffffff">
-  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0e1613">
+  <meta name="theme-color" content="#f5f8f6">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#08100d">
   <link rel="icon" href="/icon-192.png">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/style.css">
@@ -14,13 +14,14 @@
 <body>
   <header class="site-bar">
     <strong class="wordmark"><span class="brand-mark" aria-hidden="true">M</span>MisFinanzas</strong>
-    <p id="connection" class="connection-pill" role="status"></p>
+    <div class="site-bar-right">
+      <button type="button" id="mobile-cmd" class="icon-btn" aria-label="Abrir paleta de comandos">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+      </button>
+      <p id="connection" class="connection-pill" role="status"></p>
+    </div>
   </header>
   <main>
-    <div id="notice" role="alert" hidden></div>
-    <p id="storage-warning" role="status" hidden></p>
-    <button id="reload-app" type="button" class="secondary" hidden>Aplicar actualización</button>
-
     <section id="login-view" aria-labelledby="login-heading">
       <div class="login-art">
         <div class="login-brand-row">
@@ -28,16 +29,16 @@
           <span class="login-badge">PYG · Offline-First</span>
         </div>
         <div class="login-showcase">
-          <p class="login-eyebrow">Control patrimonial preciso</p>
-          <p class="login-tagline">Tus cuentas, tarjetas, préstamos y presupuestos en un solo lugar, siempre disponibles incluso sin conexión.</p>
+          <p class="login-eyebrow">Banca privada personal</p>
+          <p class="login-tagline">Tus cuentas, tarjetas, préstamos y presupuestos en un entorno rápido, cifrado y disponible sin conexión.</p>
           <div class="login-metrics" aria-hidden="true">
             <div class="login-metric-card">
               <span>Enteros exactos</span>
               <strong>Guaraníes sin redondeos</strong>
             </div>
             <div class="login-metric-card">
-              <span>Sincronización</span>
-              <strong>Local + Servidor propio</strong>
+              <span>Protección activa</span>
+              <strong>Auto-cierre en 5 minutos</strong>
             </div>
           </div>
         </div>
@@ -49,11 +50,11 @@
           <p id="login-intro">Ingresa con tu cuenta de MisFinanzas.</p>
           <form id="login-form" method="post" action="/api/login">
             <label for="login-username">Usuario</label>
-            <input id="login-username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" enterkeyhint="next" required>
+            <input id="login-username" name="username" autocomplete="username" autocorrect="off" autocapitalize="none" spellcheck="false" enterkeyhint="next" required>
             <label for="login-password">Contraseña</label>
             <div class="password-field">
               <input id="login-password" name="password" type="password" autocomplete="current-password" enterkeyhint="go" aria-describedby="login-error" required>
-              <button id="toggle-password" type="button" aria-controls="login-password" aria-label="Mostrar contraseña">Mostrar</button>
+              <button id="toggle-password" type="button" aria-controls="login-password" aria-pressed="false" aria-label="Mostrar contraseña">Mostrar</button>
             </div>
             <p id="login-error" class="login-error" role="alert"></p>
             <button id="login-submit" class="login-submit" type="submit">Entrar</button>
@@ -66,8 +67,20 @@
 
     <div id="app-view" hidden>
       <aside class="app-sidebar" aria-label="Navegación principal">
-        <div class="sidebar-brand">
-          <strong class="wordmark"><span class="brand-mark" aria-hidden="true">M</span>MisFinanzas</strong>
+        <div class="sidebar-top">
+          <div class="sidebar-brand">
+            <strong class="wordmark"><span class="brand-mark" aria-hidden="true">M</span>MisFinanzas</strong>
+            <span id="sidebar-connection" class="live-dot" title="Estado de conexión"></span>
+          </div>
+          <button type="button" id="open-cmd" class="cmd-trigger">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+            <span>Buscar o ejecutar…</span>
+            <kbd>Ctrl K</kbd>
+          </button>
+          <button type="button" id="sidebar-new" class="sidebar-cta">
+            <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>
+            <span>Nuevo movimiento</span>
+          </button>
         </div>
         <nav class="tabs" aria-label="Secciones">
           <a href="#summary" data-tab="summary"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg><span>Resumen</span></a>
@@ -84,14 +97,21 @@
           <div class="sync-bar">
             <p id="sync-status" role="status"></p>
             <div class="sync-actions">
-              <button id="local-changes" type="button" class="secondary compact" hidden>Ver cambios locales</button>
+              <button id="local-changes" type="button" class="secondary compact" hidden>Ver cambios</button>
               <button id="retry-sync" type="button" class="secondary compact">Sincronizar</button>
             </div>
           </div>
-          <div class="topline session-bar">
-            <p id="user-label" class="user-chip"></p>
-            <div class="actions">
-              <button type="button" id="relogin" class="secondary compact" hidden>Volver a iniciar sesión</button>
+          <div class="session-card">
+            <div class="session-user-row">
+              <span id="user-avatar" class="avatar-badge" aria-hidden="true">?</span>
+              <div class="session-identity">
+                <p id="user-label" class="user-chip"></p>
+                <span id="user-role-meta" class="user-role-meta"></span>
+              </div>
+              <span id="session-countdown" class="countdown-pill" title="Cierre automático tras 5 minutos de inactividad">05:00</span>
+            </div>
+            <div class="actions session-actions">
+              <button type="button" id="relogin" class="secondary compact" hidden>Renovar</button>
               <button type="button" id="logout" class="secondary compact">Salir</button>
             </div>
           </div>
@@ -99,10 +119,16 @@
       </aside>
 
       <div class="app-stage">
+        <div id="storage-banner" class="stage-banner" role="status" hidden>
+          <span id="storage-warning"></span>
+          <button type="button" id="dismiss-storage-warning" class="banner-close" aria-label="Ocultar aviso">✕</button>
+        </div>
+        <button id="reload-app" type="button" class="secondary compact stage-reload" hidden>Aplicar actualización disponible</button>
+
         <section id="summary" data-view>
           <div class="page-head topline">
             <div>
-              <p class="page-eyebrow">Panel financiero</p>
+              <p class="page-eyebrow">Panel patrimonial</p>
               <h1 tabindex="-1">Resumen</h1>
             </div>
             <button type="button" id="quick-entry"><span aria-hidden="true">+</span> Nuevo movimiento</button>
@@ -110,17 +136,22 @@
           <p id="balance-note"></p>
           <div id="kpis" class="kpis"></div>
           <div class="section-head">
-            <h2>Cuentas y tarjetas</h2>
+            <div>
+              <h2>Cuentas y tarjetas</h2>
+              <p class="muted section-sub">Haz clic en cualquier cuenta para filtrar sus movimientos.</p>
+            </div>
+            <button type="button" id="quick-account" class="secondary compact"><span aria-hidden="true">+</span> Nueva cuenta</button>
           </div>
           <div id="balances" class="cards"></div>
           <section class="transaction-panel" aria-labelledby="movements-heading">
             <div class="topline panel-header">
-              <div>
+              <div class="panel-title-group">
                 <h2 id="movements-heading">Movimientos</h2>
+                <button type="button" id="active-account-chip" class="filter-chip" hidden></button>
               </div>
               <p id="history-count" class="muted" role="status"></p>
             </div>
-            <details class="history-filters"><summary>Filtrar movimientos</summary><form id="history-filter" class="grid">
+            <details class="history-filters"><summary>Filtrar movimientos</summary><search><form id="history-filter" class="grid">
               <label>Buscar<input name="text" type="search" placeholder="Descripción o notas"></label>
               <label>Cuenta<select name="account"></select></label>
               <label>Categoría<select name="category"></select></label>
@@ -132,7 +163,7 @@
               </select></label>
               <label>Desde<input type="date" name="from"></label>
               <label>Hasta<input type="date" name="to"></label>
-            </form></details>
+            </form></search></details>
             <div id="movements" class="ledger-list"></div>
             <div id="history-pages" class="actions pagination-bar" hidden>
               <button type="button" id="previous-page" class="secondary">Anterior</button>
@@ -147,7 +178,7 @@
 
         <section id="entry" data-view hidden>
           <div class="page-head">
-            <p class="page-eyebrow">Registro rápido</p>
+            <p class="page-eyebrow">Estudio de registro rápido</p>
             <h1 id="entry-heading" tabindex="-1">Nuevo movimiento</h1>
           </div>
           <div id="entry-needed" role="status" hidden></div>
@@ -166,11 +197,38 @@
                 <option value="payment">Pago de tarjeta</option><option value="transfer">Transferencia</option>
                 <option value="refund">Devolución o reintegro</option>
               </select></label>
-              <label class="amount-box">Importe en guaraníes<input name="amount" type="number" inputmode="numeric" min="1" max="9007199254740991" step="1" placeholder="0" required></label>
-              <label>Cuenta<select name="account_id" required></select></label>
-              <label id="category-label">Categoría<select name="category_id"></select></label>
-              <label id="card-label" hidden>Tarjeta<select name="card_account_id"></select></label>
-              <label id="destination-label" hidden>Cuenta de destino<select name="destination_account_id"></select></label>
+              <div class="amount-box">
+                <label for="movement-amount">
+                  <span class="field-head"><span>Importe en guaraníes</span><output id="amount-preview" class="amount-preview"></output></span>
+                </label>
+                <div class="amount-input-wrap">
+                  <span class="currency-prefix" aria-hidden="true">₲</span>
+                  <input id="movement-amount" name="amount" type="number" inputmode="numeric" min="1" max="9007199254740991" step="1" placeholder="0" required>
+                </div>
+                <div class="quick-chips" role="group" aria-label="Atajos de importe en guaraníes">
+                  <button type="button" class="chip-btn" data-pyg-add="50000">+50 mil</button>
+                  <button type="button" class="chip-btn" data-pyg-add="100000">+100 mil</button>
+                  <button type="button" class="chip-btn" data-pyg-add="500000">+500 mil</button>
+                  <button type="button" class="chip-btn" data-pyg-add="1000000">+1 millón</button>
+                  <button type="button" class="chip-btn chip-btn--ghost" data-pyg-clear="true">Limpiar</button>
+                </div>
+              </div>
+              <label>
+                <span class="field-head"><span>Cuenta</span><button type="button" class="link-action" data-quick-catalog="account" data-target-select="account_id">+ Nueva cuenta</button></span>
+                <select name="account_id" required></select>
+              </label>
+              <label id="category-label">
+                <span class="field-head"><span>Categoría</span><button type="button" class="link-action" data-quick-catalog="category" data-target-select="category_id">+ Nueva categoría</button></span>
+                <select name="category_id"></select>
+              </label>
+              <label id="card-label" hidden>
+                <span class="field-head"><span>Tarjeta</span><button type="button" class="link-action" data-quick-catalog="card" data-target-select="card_account_id">+ Nueva tarjeta</button></span>
+                <select name="card_account_id"></select>
+              </label>
+              <label id="destination-label" hidden>
+                <span class="field-head"><span>Cuenta de destino</span><button type="button" class="link-action" data-quick-catalog="account" data-target-select="destination_account_id">+ Nueva cuenta</button></span>
+                <select name="destination_account_id"></select>
+              </label>
               <label id="original-label" hidden>Gasto original<select name="original_operation_id"></select></label>
               <label>Fecha<input name="date" type="date" required></label>
             </div>
@@ -179,87 +237,143 @@
             <label>Notas (opcional)<textarea name="notes" maxlength="4000" rows="3" placeholder="Detalles adicionales"></textarea></label>
             <div class="actions form-actions">
               <button id="save-movement">Guardar movimiento</button>
+              <button type="submit" id="save-another" class="secondary" data-stay="true">Guardar y agregar otro <kbd class="btn-kbd">⇧↵</kbd></button>
               <button type="button" id="cancel-edit" class="secondary" hidden>Cancelar edición</button>
             </div>
           </form>
         </section>
 
         <section id="settings" data-view hidden>
-          <div class="page-head">
-            <p class="page-eyebrow">Preferencias y catálogos</p>
-            <h1 tabindex="-1">Configuración</h1>
-            <p class="muted">Necesitas conexión para modificar cuentas y categorías.</p>
-          </div>
-          <section class="workspace-panel theme-panel">
-            <div class="topline">
-              <div>
-                <h2>Apariencia</h2>
-                <p class="muted">Tema blanco fintech predeterminado con acentos verde bosque.</p>
-              </div>
-              <div class="theme-switcher" id="theme-switcher" role="group" aria-label="Tema visual">
-                <button type="button" class="secondary compact" data-theme-choice="light" aria-pressed="true">Claro</button>
-                <button type="button" class="secondary compact" data-theme-choice="dark" aria-pressed="false">Oscuro</button>
-                <button type="button" class="secondary compact" data-theme-choice="auto" aria-pressed="false">Sistema</button>
-              </div>
+          <div class="page-head topline">
+            <div>
+              <p class="page-eyebrow">Centro de control</p>
+              <h1 tabindex="-1">Configuración</h1>
+              <p class="muted">Administra cuentas, categorías, usuarios y preferencias visuales. Requiere conexión para cambios de catálogo.</p>
             </div>
-          </section>
-          <div class="grid settings-grid">
+            <div id="settings-primary-cta" class="settings-cta-slot"></div>
+          </div>
+
+          <div id="settings-tabs" class="subtabs" role="tablist" aria-label="Secciones de configuración">
+            <button type="button" id="stab-accounts" class="subtab" role="tab" aria-selected="true" aria-controls="spanel-accounts" data-settings-tab="accounts">
+              <span>Cuentas y Tarjetas</span><span id="count-accounts" class="tab-count">0</span>
+            </button>
+            <button type="button" id="stab-categories" class="subtab" role="tab" aria-selected="false" aria-controls="spanel-categories" data-settings-tab="categories" tabindex="-1">
+              <span>Categorías</span><span id="count-categories" class="tab-count">0</span>
+            </button>
+            <button type="button" id="stab-users" class="subtab" role="tab" aria-selected="false" aria-controls="spanel-users" data-settings-tab="users" tabindex="-1" hidden>
+              <span>Usuarios</span><span id="count-users" class="tab-count">0</span>
+            </button>
+            <button type="button" id="stab-profile" class="subtab" role="tab" aria-selected="false" aria-controls="spanel-profile" data-settings-tab="profile" tabindex="-1">
+              <span>Mi Perfil y Apariencia</span>
+            </button>
+          </div>
+
+          <div id="spanel-accounts" class="subpanel" role="tabpanel" aria-labelledby="stab-accounts">
+            <div id="accounts-metrics" class="mini-metrics"></div>
             <section class="workspace-panel">
-              <h2>Cuentas</h2>
-              <div id="account-list"></div>
-              <form id="account-form">
-                <h4>Nueva cuenta</h4>
-                <input type="hidden" name="id">
-                <label>Nombre<input name="name" maxlength="160" required></label>
-                <label>Tipo<select name="kind">
-                  <option value="cash">Efectivo</option><option value="bank">Banco</option>
-                  <option value="wallet">Billetera</option><option value="card">Tarjeta de crédito</option>
-                </select></label>
-                <label>Saldo inicial en guaraníes<input name="initial_balance" type="number" inputmode="numeric" step="1" value="0" required></label>
-                <label>Fecha de corte (opcional)<input name="cutoff_date" type="date"></label>
-                <p id="cutoff-help" class="muted">Si indicas una fecha de corte, carga el saldo al inicio de ese día. Los movimientos anteriores quedan en el historial.</p>
-                <label>Entidad (opcional)<input name="institution" maxlength="160"></label>
-                <div id="card-details" hidden>
-                  <label>Día de cierre<input name="closing_day" type="number" min="1" max="31" step="1"></label>
-                  <label>Día de vencimiento<input name="due_day" type="number" min="1" max="31" step="1"></label>
-                </div>
-                <label>Notas (opcional)<textarea name="notes" maxlength="4000"></textarea></label>
-                <div class="actions">
-                  <button>Guardar cuenta</button>
-                  <button class="secondary" type="button" id="account-cancel" hidden>Cancelar edición</button>
-                </div>
-              </form>
-            </section>
-            <section class="workspace-panel">
-              <h2>Categorías</h2>
-              <div id="category-list"></div>
-              <details>
-                <summary>Categorías sugeridas</summary>
-                <form id="suggestions-form">
-                  <div id="suggested-categories"></div>
-                  <button>Crear categorías seleccionadas</button>
-                </form>
-              </details>
-              <form id="category-form">
-                <h4>Nueva categoría</h4>
-                <input type="hidden" name="id">
-                <label>Nombre<input name="name" maxlength="160" required></label>
-                <label>Tipo<select name="kind"><option value="expense">Gasto</option><option value="income">Ingreso</option></select></label>
-                <div class="actions">
-                  <button>Guardar categoría</button>
-                  <button class="secondary" type="button" id="category-cancel" hidden>Cancelar edición</button>
-                </div>
-              </form>
+              <div class="panel-toolbar">
+                <h2>Tus cuentas y tarjetas</h2>
+                <input id="account-filter" class="inline-search" type="search" placeholder="Filtrar por nombre o entidad…" aria-label="Filtrar cuentas">
+              </div>
+              <div id="account-list" class="catalog-list"></div>
             </section>
           </div>
-          <details id="user-admin" class="workspace-accordion" hidden>
-            <summary>Administración de usuarios</summary>
-            <form id="user-form">
-              <label>Nuevo usuario<input name="username" maxlength="64" required></label>
-              <label>Contraseña<input name="password" type="password" minlength="12" maxlength="256" required autocomplete="new-password"></label>
-              <button>Crear usuario</button>
-            </form>
-          </details>
+
+          <div id="spanel-categories" class="subpanel" role="tabpanel" aria-labelledby="stab-categories" hidden>
+            <div class="grid category-columns">
+              <section class="workspace-panel">
+                <div class="topline panel-header">
+                  <h2>Categorías de gasto</h2>
+                  <button type="button" class="secondary compact" data-open-category="expense">+ Gasto</button>
+                </div>
+                <div id="category-expense-list" class="catalog-list"></div>
+              </section>
+              <section class="workspace-panel">
+                <div class="topline panel-header">
+                  <h2>Categorías de ingreso</h2>
+                  <button type="button" class="secondary compact" data-open-category="income">+ Ingreso</button>
+                </div>
+                <div id="category-income-list" class="catalog-list"></div>
+              </section>
+            </div>
+            <details id="suggestions-details">
+              <summary>Categorías sugeridas para empezar rápido</summary>
+              <form id="suggestions-form">
+                <div id="suggested-categories" class="suggestions-grid"></div>
+                <div class="actions form-actions">
+                  <button>Crear categorías seleccionadas</button>
+                </div>
+              </form>
+            </details>
+          </div>
+
+          <div id="spanel-users" class="subpanel" role="tabpanel" aria-labelledby="stab-users" hidden>
+            <div id="users-metrics" class="mini-metrics"></div>
+            <section id="user-admin" class="workspace-panel" aria-labelledby="user-admin-heading">
+              <div class="topline panel-header">
+                <div>
+                  <h2 id="user-admin-heading">Administración de usuarios</h2>
+                  <p class="muted">Crea cuentas de acceso, gestiona permisos de administrador, restablece contraseñas o revoca accesos.</p>
+                </div>
+              </div>
+              <div id="user-list" class="catalog-list"></div>
+            </section>
+          </div>
+
+          <div id="spanel-profile" class="subpanel" role="tabpanel" aria-labelledby="stab-profile" hidden>
+            <div class="grid profile-grid">
+              <div class="profile-col">
+                <section class="workspace-panel">
+                  <h2>Apariencia</h2>
+                  <p class="muted">Elige el estilo visual de MisFinanzas. Los cambios se aplican al instante.</p>
+                  <div class="theme-cards" id="theme-switcher" role="group" aria-label="Tema visual">
+                    <button type="button" class="theme-card" data-theme-choice="light" aria-pressed="true">
+                      <span class="theme-preview theme-preview--light" aria-hidden="true"><span></span><span></span></span>
+                      <strong>Claro Alabastro</strong>
+                      <small>Luminoso y limpio</small>
+                    </button>
+                    <button type="button" class="theme-card" data-theme-choice="dark" aria-pressed="false">
+                      <span class="theme-preview theme-preview--dark" aria-hidden="true"><span></span><span></span></span>
+                      <strong>Obsidiana</strong>
+                      <small>Esmeralda nocturno</small>
+                    </button>
+                    <button type="button" class="theme-card" data-theme-choice="auto" aria-pressed="false">
+                      <span class="theme-preview theme-preview--auto" aria-hidden="true"><span></span><span></span></span>
+                      <strong>Sistema</strong>
+                      <small>Según tu equipo</small>
+                    </button>
+                  </div>
+                </section>
+                <section class="workspace-panel security-card">
+                  <div class="topline">
+                    <h2>Seguridad de sesión</h2>
+                    <span class="pill pill--positive">Protegida</span>
+                  </div>
+                  <p class="muted">Para proteger tus datos financieros, la sesión se cierra automáticamente tras <strong>5 minutos de inactividad</strong> o si abandonas la ventana.</p>
+                  <p class="security-timer">Tiempo restante de inactividad: <strong id="profile-countdown">05:00</strong></p>
+                </section>
+              </div>
+              <section class="workspace-panel" aria-labelledby="profile-heading">
+                <div class="topline">
+                  <h2 id="profile-heading">Mi cuenta</h2>
+                  <span id="profile-role" class="pill pill--brand"></span>
+                </div>
+                <p class="muted">Actualiza tu nombre de usuario o contraseña. Al cambiar tu contraseña, se cierran automáticamente las demás sesiones activas.</p>
+                <form id="profile-form">
+                  <label>Usuario<input name="username" maxlength="64" autocomplete="username" autocorrect="off" autocapitalize="none" spellcheck="false" required></label>
+                  <label>Contraseña actual<input name="current_password" type="password" maxlength="256" autocomplete="current-password" required></label>
+                  <label>Nueva contraseña (opcional, mínimo 12 caracteres)<input name="new_password" type="password" minlength="12" maxlength="256" autocomplete="new-password" placeholder="Dejar vacío para conservar la actual"></label>
+                  <div id="profile-pw-strength" class="pw-strength" hidden>
+                    <div class="pw-bars"><span></span><span></span><span></span><span></span></div>
+                    <small class="pw-label"></small>
+                  </div>
+                  <div class="actions form-actions">
+                    <button>Guardar mis datos</button>
+                  </div>
+                </form>
+              </section>
+            </div>
+          </div>
         </section>
 
         <section id="credit" data-view hidden>
@@ -289,7 +403,106 @@
       </div>
     </div>
 
-    <dialog id="confirm-dialog" aria-labelledby="confirm-title">
+    <!-- Slide-Over Drawer: Cuentas -->
+    <dialog id="account-drawer" class="drawer" aria-labelledby="account-drawer-title">
+      <div class="drawer-head">
+        <div>
+          <p class="page-eyebrow">Catálogo</p>
+          <h2 id="account-drawer-title">Nueva cuenta</h2>
+        </div>
+        <button type="button" class="icon-btn drawer-close" data-close-drawer="account-drawer" aria-label="Cerrar panel">✕</button>
+      </div>
+      <form id="account-form" class="drawer-body">
+        <input type="hidden" name="id">
+        <input type="hidden" name="target_select">
+        <div class="entry-fields">
+          <label>Nombre<input name="name" maxlength="160" placeholder="Ej. Itaú, Efectivo, Visa…" required></label>
+          <label>Tipo<select name="kind">
+            <option value="cash">Efectivo</option><option value="bank">Banco</option>
+            <option value="wallet">Billetera</option><option value="card">Tarjeta de crédito</option>
+          </select></label>
+        </div>
+        <label>
+          <span class="field-head"><span>Saldo inicial en guaraníes</span><output id="initial-balance-preview" class="amount-preview"></output></span>
+          <input name="initial_balance" type="number" inputmode="numeric" step="1" value="0" required>
+        </label>
+        <div id="card-details" class="entry-fields" hidden>
+          <label>Día de cierre<input name="closing_day" type="number" min="1" max="31" step="1" placeholder="1 - 31"></label>
+          <label>Día de vencimiento<input name="due_day" type="number" min="1" max="31" step="1" placeholder="1 - 31"></label>
+        </div>
+        <details id="account-advanced" class="form-advanced">
+          <summary>Opciones avanzadas (entidad, fecha de corte, notas)</summary>
+          <label>Entidad (opcional)<input name="institution" maxlength="160" placeholder="Ej. Banco Itaú, Ueno…"></label>
+          <label>Fecha de corte (opcional)<input name="cutoff_date" type="date"></label>
+          <p id="cutoff-help" class="muted">Si indicas una fecha de corte, carga el saldo al inicio de ese día. Los movimientos anteriores quedan en el historial.</p>
+          <label>Notas (opcional)<textarea name="notes" maxlength="4000" rows="2"></textarea></label>
+        </details>
+        <div class="actions drawer-footer">
+          <button type="button" id="account-cancel" class="secondary">Cancelar</button>
+          <button id="account-submit">Guardar cuenta</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Slide-Over Drawer: Categorías -->
+    <dialog id="category-drawer" class="drawer" aria-labelledby="category-drawer-title">
+      <div class="drawer-head">
+        <div>
+          <p class="page-eyebrow">Catálogo</p>
+          <h2 id="category-drawer-title">Nueva categoría</h2>
+        </div>
+        <button type="button" class="icon-btn drawer-close" data-close-drawer="category-drawer" aria-label="Cerrar panel">✕</button>
+      </div>
+      <form id="category-form" class="drawer-body">
+        <input type="hidden" name="id">
+        <input type="hidden" name="target_select">
+        <label>Nombre<input name="name" maxlength="160" placeholder="Ej. Supermercado, Salario…" required></label>
+        <label>Tipo<select name="kind"><option value="expense">Gasto</option><option value="income">Ingreso</option></select></label>
+        <div class="actions drawer-footer">
+          <button type="button" id="category-cancel" class="secondary">Cancelar</button>
+          <button id="category-submit">Guardar categoría</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Slide-Over Drawer: Usuarios (Admin) -->
+    <dialog id="user-drawer" class="drawer" aria-labelledby="user-drawer-title">
+      <div class="drawer-head">
+        <div>
+          <p class="page-eyebrow">Seguridad y accesos</p>
+          <h2 id="user-drawer-title">Nuevo usuario</h2>
+        </div>
+        <button type="button" class="icon-btn drawer-close" data-close-drawer="user-drawer" aria-label="Cerrar panel">✕</button>
+      </div>
+      <form id="user-form" class="drawer-body">
+        <input type="hidden" name="id">
+        <label>Usuario<input name="username" maxlength="64" autocomplete="off" autocorrect="off" autocapitalize="none" spellcheck="false" required></label>
+        <label><span id="user-password-label">Contraseña (mínimo 12 caracteres)</span><input name="password" type="password" minlength="12" maxlength="256" autocomplete="new-password" required></label>
+        <div id="user-pw-strength" class="pw-strength" hidden>
+          <div class="pw-bars"><span></span><span></span><span></span><span></span></div>
+          <small class="pw-label"></small>
+        </div>
+        <label class="checkbox"><input type="checkbox" name="is_admin"> Permisos de administrador</label>
+        <div class="actions drawer-footer">
+          <button type="button" id="user-cancel" class="secondary">Cancelar</button>
+          <button id="user-submit">Crear usuario</button>
+        </div>
+      </form>
+    </dialog>
+
+    <!-- Command Palette (Ctrl+K) -->
+    <dialog id="command-dialog" class="cmd-dialog" aria-labelledby="command-title">
+      <h2 id="command-title" class="visually-hidden">Paleta de comandos</h2>
+      <div class="cmd-search-bar">
+        <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg>
+        <input id="command-input" type="search" placeholder="Ir a una sección, crear cuenta, cambiar tema…" autocomplete="off" spellcheck="false">
+        <kbd>Esc</kbd>
+      </div>
+      <div id="command-results" class="cmd-results" role="listbox" aria-label="Resultados de comandos"></div>
+    </dialog>
+
+    <!-- Confirmación -->
+    <dialog id="confirm-dialog" class="confirm-dialog" aria-labelledby="confirm-title">
       <h2 id="confirm-title">Confirmar acción</h2>
       <p id="confirm-message"></p>
       <form method="dialog" class="actions">
@@ -297,6 +510,9 @@
         <button value="confirm" id="confirm-accept">Confirmar</button>
       </form>
     </dialog>
+
+    <div id="toast-announcer" class="visually-hidden" aria-live="polite"></div>
+    <div id="toast-stack" class="toast-stack" role="region" aria-label="Notificaciones"></div>
   </main>
   <script type="module" src="/app.mjs"></script>
 </body>

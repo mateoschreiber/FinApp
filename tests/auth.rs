@@ -667,6 +667,37 @@ async fn logout_requires_user_identity_matching_the_cookie() {
 }
 
 #[tokio::test]
+async fn session_expires_five_minutes_after_last_activity() {
+    let db = Database::open_memory().unwrap();
+    db.bootstrap_admin("admin", "password-1234").unwrap();
+    let app = app(db.clone(), "https://finanzas.example".to_owned());
+    let login = request(
+        &app,
+        "POST",
+        "/api/login",
+        r#"{"username":"admin","password":"password-1234"}"#,
+        None,
+    )
+    .await;
+    let full_cookie = login
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert!(!full_cookie.contains("Max-Age="));
+    let ttl: i64 =
+        db.0.lock()
+            .unwrap()
+            .query_row("SELECT expires_at - unixepoch() FROM sessions", [], |r| {
+                r.get(0)
+            })
+            .unwrap();
+    assert!((295..=305).contains(&ttl), "expected ~300s TTL, got {ttl}");
+}
+
+#[tokio::test]
 async fn login_purges_expired_sessions() {
     use rusqlite::params;
     let db = Database::open_memory().unwrap();
@@ -716,4 +747,243 @@ async fn login_purges_expired_sessions() {
         .unwrap()
     };
     assert_eq!(expired, 0);
+}
+
+async fn authed(
+    app: &Router,
+    method: &str,
+    path: &str,
+    body: &str,
+    cookie: &str,
+    user_id: &str,
+) -> axum::response::Response {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(path)
+        .header("cookie", cookie)
+        .header("x-finapp-user", user_id);
+    if method != "GET" {
+        builder = builder
+            .header("content-type", "application/json")
+            .header("origin", "https://finanzas.example");
+    }
+    app.clone()
+        .oneshot(builder.body(Body::from(body.to_owned())).unwrap())
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn user_and_admin_crud_manage_profiles_roles_passwords_and_deletion() {
+    use http_body_util::BodyExt;
+    let db = Database::open_memory().unwrap();
+    db.bootstrap_admin("admin", "password-1234").unwrap();
+    let app = app(db.clone(), "https://finanzas.example".to_owned());
+
+    let admin_login = request(
+        &app,
+        "POST",
+        "/api/login",
+        r#"{"username":"admin","password":"password-1234"}"#,
+        None,
+    )
+    .await;
+    let admin_cookie = admin_login
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+    let admin_json: serde_json::Value =
+        serde_json::from_slice(&admin_login.into_body().collect().await.unwrap().to_bytes())
+            .unwrap();
+    let admin_id = admin_json["id"].as_str().unwrap().to_owned();
+
+    // Admin cannot demote themselves when they are the only admin.
+    assert_eq!(
+        authed(
+            &app,
+            "PATCH",
+            &format!("/api/users/{admin_id}"),
+            r#"{"is_admin":false}"#,
+            &admin_cookie,
+            &admin_id,
+        )
+        .await
+        .status(),
+        StatusCode::BAD_REQUEST
+    );
+    // Admin cannot delete their own active account.
+    assert_eq!(
+        authed(
+            &app,
+            "DELETE",
+            &format!("/api/users/{admin_id}"),
+            "{}",
+            &admin_cookie,
+            &admin_id,
+        )
+        .await
+        .status(),
+        StatusCode::BAD_REQUEST
+    );
+
+    // Admin creates a standard user.
+    let created = authed(
+        &app,
+        "POST",
+        "/api/users",
+        r#"{"username":"alice","password":"password-1234","is_admin":false}"#,
+        &admin_cookie,
+        &admin_id,
+    )
+    .await;
+    assert_eq!(created.status(), StatusCode::CREATED);
+    let alice_json: serde_json::Value =
+        serde_json::from_slice(&created.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    let alice_id = alice_json["id"].as_str().unwrap().to_owned();
+
+    let alice_login = request(
+        &app,
+        "POST",
+        "/api/login",
+        r#"{"username":"alice","password":"password-1234"}"#,
+        None,
+    )
+    .await;
+    let alice_cookie = alice_login
+        .headers()
+        .get("set-cookie")
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .split(';')
+        .next()
+        .unwrap()
+        .to_owned();
+
+    // Non-admin cannot list, edit or delete users.
+    assert_eq!(
+        authed(&app, "GET", "/api/users", "", &alice_cookie, &alice_id)
+            .await
+            .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        authed(
+            &app,
+            "PATCH",
+            &format!("/api/users/{admin_id}"),
+            r#"{"username":"hacked"}"#,
+            &alice_cookie,
+            &alice_id,
+        )
+        .await
+        .status(),
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        authed(
+            &app,
+            "DELETE",
+            &format!("/api/users/{admin_id}"),
+            "{}",
+            &alice_cookie,
+            &alice_id,
+        )
+        .await
+        .status(),
+        StatusCode::FORBIDDEN
+    );
+
+    // Alice updates her own username and password via PATCH /api/me.
+    assert_eq!(
+        authed(
+            &app,
+            "PATCH",
+            "/api/me",
+            r#"{"current_password":"wrong-password","username":"alice2"}"#,
+            &alice_cookie,
+            &alice_id,
+        )
+        .await
+        .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let updated_me = authed(
+        &app,
+        "PATCH",
+        "/api/me",
+        r#"{"current_password":"password-1234","username":"alice2","new_password":"new-password-1234"}"#,
+        &alice_cookie,
+        &alice_id,
+    )
+    .await;
+    assert_eq!(updated_me.status(), StatusCode::OK);
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/api/login",
+            r#"{"username":"alice2","password":"new-password-1234"}"#,
+            None,
+        )
+        .await
+        .status(),
+        StatusCode::OK
+    );
+
+    // Admin lists users and sees both admin and alice2.
+    let list_res = authed(&app, "GET", "/api/users", "", &admin_cookie, &admin_id).await;
+    assert_eq!(list_res.status(), StatusCode::OK);
+    let users: serde_json::Value =
+        serde_json::from_slice(&list_res.into_body().collect().await.unwrap().to_bytes()).unwrap();
+    assert_eq!(users.as_array().unwrap().len(), 2);
+
+    // Admin promotes alice2 to admin, resets her password, and then deletes her account.
+    let promoted = authed(
+        &app,
+        "PATCH",
+        &format!("/api/users/{alice_id}"),
+        r#"{"username":"alice_admin","password":"reset-password-1234","is_admin":true}"#,
+        &admin_cookie,
+        &admin_id,
+    )
+    .await;
+    assert_eq!(promoted.status(), StatusCode::OK);
+
+    // Previous alice session was revoked on admin password reset.
+    assert_eq!(
+        request(&app, "GET", "/api/me", "", Some(&alice_cookie))
+            .await
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+
+    let deleted = authed(
+        &app,
+        "DELETE",
+        &format!("/api/users/{alice_id}"),
+        "{}",
+        &admin_cookie,
+        &admin_id,
+    )
+    .await;
+    assert_eq!(deleted.status(), StatusCode::NO_CONTENT);
+    assert_eq!(
+        request(
+            &app,
+            "POST",
+            "/api/login",
+            r#"{"username":"alice_admin","password":"reset-password-1234"}"#,
+            None,
+        )
+        .await
+        .status(),
+        StatusCode::UNAUTHORIZED
+    );
 }

@@ -145,8 +145,12 @@ pub fn app(db: Database, origin: String) -> Router {
         .route("/health", get(|| async { "ok" }))
         .route("/api/login", post(auth::login))
         .route("/api/logout", post(auth::logout))
-        .route("/api/me", get(auth::me))
-        .route("/api/users", post(auth::create_user))
+        .route("/api/me", get(auth::me).patch(auth::update_me))
+        .route("/api/users", get(auth::list_users).post(auth::create_user))
+        .route(
+            "/api/users/{id}",
+            axum::routing::patch(auth::update_user).delete(auth::delete_user),
+        )
         .merge(finance::routes())
         .merge(catalog::routes())
         .merge(credit::routes())
