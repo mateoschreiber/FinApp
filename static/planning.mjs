@@ -1,5 +1,5 @@
 import {creditProjection} from './credit.mjs';
-import {confirmAction, element as node, money as formatMoney, field, chunkedText} from './ui.mjs';
+import {confirmAction, element as node, money as formatMoney, field, chunkedText, progressBar} from './ui.mjs';
 
 const byId = items => new Map(items.map(item => [item.id, item.name]));
 const kinds = {income:'Ingreso', expense:'Gasto', payment:'Pago de tarjeta', transfer:'Transferencia', refund:'Devolución'};
@@ -104,19 +104,22 @@ export async function renderPlanning(container, {api, getView, today, isCurrent,
       const chart=node('div',null,'bars');
       for (const item of perCategory) {
         const row=node('div',null,'bar-row');
-        row.append(node('p',item.name+' · '+formatMoney(item.amount)));
-        const bar=node('div',null,'bar');
+        const heading=node('p');
+        heading.append(node('span',item.name),node('strong',formatMoney(item.amount)));
+        row.append(heading);
         const width=max>0n?Number(item.amount*10000n/max)/100:0;
-        bar.style.width=Math.max(width,0)+'%';
-        row.append(bar);
+        row.append(progressBar(width));
         chart.append(row);
       }
       totals.append(node('h3','Gastos netos por categoría'),chart);
     }
     const budgets=section(body,'Presupuestos del mes');
-    table(budgets,['Categoría','Presupuesto','Gastado','Disponible',''],report.budgets.map(b=>{
+    table(budgets,['Categoría','Presupuesto','Gastado','Progreso','Disponible',''],report.budgets.map(b=>{
       const spent=BigInt(report.categories[b.category_id]||0);
-      return [categories.get(b.category_id)||b.category_id,formatMoney(b.amount),formatMoney(spent),formatMoney(BigInt(b.amount)-spent),action('Quitar',async()=>{if(await confirmAction('¿Quitar el presupuesto del mes?','Quitar'))save({kind:'remove_budget',month:report.month,category_id:b.category_id});})];
+      const pct=b.amount>0?Number(spent*100n/BigInt(b.amount)):0;
+      const cell=node('div',null,'progress-cell');
+      cell.append(node('span',pct+'%'),progressBar(pct,pct>100?'over':pct>=80?'warn':''));
+      return [categories.get(b.category_id)||b.category_id,formatMoney(b.amount),formatMoney(spent),cell,formatMoney(BigInt(b.amount)-spent),action('Quitar',async()=>{if(await confirmAction('¿Quitar el presupuesto del mes?','Quitar'))save({kind:'remove_budget',month:report.month,category_id:b.category_id});})];
     }));
     if(expenses.length) {
       const f=newForm(budgets,'Definir o actualizar presupuesto',v=>save({kind:'budget',month:report.month,...v,amount:Number(v.amount)}));
@@ -125,12 +128,16 @@ export async function renderPlanning(container, {api, getView, today, isCurrent,
     } else budgets.append(node('p','Crea una categoría de gasto en Configuración.'));
     const goals=section(body,'Objetivos de ahorro');
     let goalForm;
-    table(goals,['Objetivo','Cuenta','Saldo al cierre','Meta','Mes objetivo',''],report.goals.map(g=>{
+    table(goals,['Objetivo','Cuenta','Saldo al cierre','Meta','Progreso','Mes objetivo',''],report.goals.map(g=>{
       const actions=node('div');
       actions.className='actions';
       if (liquid.length) actions.append(action('Editar',() => openForEdit(goalForm,g)));
       actions.append(removePlan('remove_goal',g.id));
-      return [g.name,accounts.get(g.account_id)||g.account_id,formatMoney(report.balances[g.account_id]||0),formatMoney(g.target),g.deadline,actions];
+      const saved=BigInt(report.balances[g.account_id]||0);
+      const pct=g.target>0?Math.max(0,Number(saved*100n/BigInt(g.target))):0;
+      const cell=node('div',null,'progress-cell');
+      cell.append(node('span',pct+'%'),progressBar(pct,'positive'));
+      return [g.name,accounts.get(g.account_id)||g.account_id,formatMoney(saved),formatMoney(g.target),cell,g.deadline,actions];
     }));
     if(liquid.length) {
       const f=newForm(goals,'Nuevo objetivo',v=>save({kind:'goal',...v,id:v.id || crypto.randomUUID(),target:Number(v.target)}));

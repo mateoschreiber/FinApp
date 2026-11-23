@@ -1,6 +1,6 @@
 # Fases de MisFinanzas — implementadas y pendientes
 
-Fecha: 2026-11-22. Fuentes: `docs/superpowers/plans/2026-11-14-misfinanzas-fase-1.md`, `AUDITORIA.md` (F8.4–F16) y la auditoría actualizada al 2026-11-22 (141 pruebas Rust + 66 JavaScript en verde, `cargo test --locked`, `npm test` y `legacy-scan` con código de salida 0).
+Fecha: 2026-11-22. Fuentes: `docs/superpowers/plans/2026-11-14-misfinanzas-fase-1.md`, `AUDITORIA.md` (F8.4–F17) y la auditoría actualizada al 2026-11-22 (141 pruebas Rust + 66 JavaScript en verde, `cargo test --locked`, `npm test` y `legacy-scan` con código de salida 0).
 
 Criterio de hecho de todo el plan: cada cambio lleva primero una prueba que falla, luego se implementa, y `cargo fmt --check`, `clippy -D warnings`, `cargo test --locked` y `npm test` quedan en verde antes de dar la fase por cerrada.
 
@@ -100,6 +100,12 @@ Reglas de oro de la fase (de la skill): nunca quitar el anillo de foco; objetivo
 - **View Transitions y enrutamiento accesible de foco (`same-document-transitions`)**: `tab()` en `static/app.mjs` envuelve el cambio de sección en `document.startViewTransition()` y transfiere el foco al `<h1>` en `transition.finished.finally(...)`, respetando `prefers-reduced-motion: reduce`.
 - **Validación post-interacción y formularios de marca (`validate-input-after-interaction`, `dark-mode`, `brand-consistent-forms`)**: `<meta name="color-scheme" content="light dark">` en `<head>`, `accent-color: var(--accent)` en `:root`, selector `:is(:user-invalid, [aria-invalid="true"])`, errores inline extendidos a todos los formularios en `bindForm()`, e `inputmode="numeric"` en `initial_balance`.
 - **Micro-interacciones táctiles, simetría móvil y ES2023 (`natural-interactions`, `js`)**: ícono SVG en el botón «Más» (`#more-toggle`), `button:active:not(:disabled) { scale: 0.98 }`, `tabular-nums` en celdas de tablas, `.toSorted()` en `credit.mjs`, `planning.mjs` y `extras.mjs` (`0` hallazgos en `legacy-scan`), `manifest.webmanifest` alineado y caché SW `misfinanzas-shell-v8`.
+
+### F17 — Rediseño Visual Fintech Premium (Blanco Dominante + Firma Verde Bosque, ejecutada)
+
+- **Sistema visual blanco predominante (`static/style.css`, `static/manifest.webmanifest`)**: arquitectura CSS en `@layer reset, tokens, base, layout, components, utilities;`; reemplazo del lienzo crema por superficies blancas puras (`#ffffff`) sobre fondo alabastro frío (`#f7f9f8`) con sombras ambientales multicapa, `corner-shape: squircle` progresivo y acentos precisos del verde bosque (`#173b2d`, `#edf6f1`, `#cde2d6`). Tema **Claro (blanco)** predeterminado con selector *Claro / Oscuro / Sistema* en Configuración.
+- **App Shell fintech sin ruido (`static/index.html`, `static/style.css`, `static/app.mjs`)**: sidebar blanca fija en escritorio (`256px`) con acceso directo a las 6 secciones con íconos SVG + bloque integrado de sincronización y usuario (eliminando las 3 barras horizontales apiladas); en móvil, barra superior única translúcida (`backdrop-filter: blur(12px)`) y barra inferior blanca con 5 ítems.
+- **Rediseño integral de boxes y vistas (`static/ui.mjs`, `static/app.mjs`, `static/planning.mjs`)**: Bento Grid de KPIs (Hero blanco con borde superior verde y pill `Disponible líquido` + 3 KPIs con `.icon-badge`), tarjetas de cuentas y tarjetas de crédito con íconos por tipo y banda verde superior, ledger de movimientos con avatar circular por tipo, chips de cuenta/categoría y signos explícitos (`+`/`−`), segmented pills + monto protagónico en `Nuevo movimiento`, barras de progreso semánticas en Presupuestos y Metas, y caché SW `misfinanzas-shell-v9`.
 
 ### P3 — Seguridad (5,5–10 h, parcialmente condicional) — al final por decisión del usuario
 

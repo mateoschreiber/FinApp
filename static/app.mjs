@@ -5,7 +5,7 @@ import {renderReconciliation} from './reconciliation.mjs';
 import {openUserStore} from './offline-store.mjs';
 import {syncUser} from './sync.mjs';
 import {calculateBalances, overlayOperations, checkEditBase, setupStep, historyPage, monthlyTotals, netWorth} from './view-model.mjs';
-import {confirmAction, element, icon, lastIdentity, money, sessionKey} from './ui.mjs';
+import {confirmAction, element, icon, lastIdentity, money, pill, sessionKey} from './ui.mjs';
 
 const $ = id => document.getElementById(id);
 const fields = id => $(id).elements;
@@ -53,8 +53,8 @@ function showError(error, fromSync = false) {
   notice(message, fromSync);
 }
 
-function button(label, run) {
-  const b = element('button', label, 'secondary');
+function button(label, run, className = 'secondary compact') {
+  const b = element('button', label, className);
   b.type = 'button';
   b.addEventListener('click', async () => {
     b.disabled = true;
@@ -95,7 +95,7 @@ const sections = ['summary', 'entry', 'settings', 'credit', 'planning', 'exchang
 const sectionFromHash = () => sections.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'summary';
 
 function showMore(open) {
-  $('more-menu').hidden = !open;
+  $('more-menu').dataset.open = open ? 'true' : 'false';
   $('more-toggle').setAttribute('aria-expanded', String(open));
 }
 
@@ -188,17 +188,25 @@ function renderKpis(totals) {
   const result = monthlyTotals(view.operations, month);
   const monthLabel = new Intl.DateTimeFormat('es-PY', {month:'long', year:'numeric', timeZone:'America/Asuncion'})
     .format(new Date(month + '-15T12:00:00Z'));
-  const kpi = (label, value, className, detail, iconName) => {
+  const kpi = (label, value, className, detail, iconName, heroPill = null) => {
     const card = element('div', null, 'kpi');
-    const head = element('p', label, 'label');
-    if (iconName) head.prepend(icon(iconName));
+    const head = element('div', null, 'kpi-head');
+    head.append(element('p', label, 'label'));
+    if (heroPill) {
+      head.append(element('span', heroPill, 'kpi-pill'));
+    } else if (iconName) {
+      const badge = element('span', null, 'icon-badge' + (className === 'negative' ? ' negative' : ''));
+      badge.append(icon(iconName));
+      head.append(badge);
+    }
     card.append(head, element('p', money(value), 'value ' + className));
     if (detail) card.append(element('p', detail, 'detail'));
     kpis.append(card);
   };
-  kpi('Saldo en cuentas', available, available >= 0 ? 'positive' : 'negative', null, 'cash');
+  kpi('Saldo en cuentas', available, available >= 0 ? '' : 'negative',
+    'Ingresos ' + money(result.income) + ' · Gastos ' + money(result.expense) + ' en ' + monthLabel, 'cash', 'Disponible líquido');
   kpi('Saldo neto de cuentas y tarjetas', net, net >= 0 ? 'positive' : 'negative', 'El patrimonio con préstamos está en Planificación.', 'trend');
-  kpi('Deuda de tarjetas', debt, debt > 0 ? 'negative' : '', null, 'card');
+  kpi('Deuda de tarjetas', debt, debt > 0 ? 'negative' : '', debt > 0 ? 'Saldo pendiente en tarjetas activas' : 'Sin deuda de tarjetas', 'card');
   kpi('Resultado de ' + monthLabel, result.net, result.net >= 0 ? 'positive' : 'negative',
     'Ingresos ' + money(result.income) + ' · Gastos ' + money(result.expense), 'bars');
 }
@@ -213,15 +221,20 @@ function renderBalances() {
     const totals = calculateBalances(view.accounts, view.operations);
     renderKpis(totals);
     for (const a of view.accounts) {
-      const card = element('article',null,'card balance-card');
-      const balance = totals.get(a.id);
       const isCard = a.kind === 'card';
+      const card = element('article', null, 'card balance-card' + (isCard ? ' balance-card--card' : ''));
+      const balance = totals.get(a.id);
       const color = (isCard ? balance > 0 : balance < 0) ? 'negative' : '';
       const type = {bank:'Banco',cash:'Efectivo',wallet:'Billetera',card:'Tarjeta de crédito'}[a.kind];
-      card.append(element('p',type,'balance-kind'), element('strong',a.name),
-        element('p',money(balance),'amount ' + color));
-      if (isCard) card.append(element('p',balance < 0 ? 'Saldo a favor' : 'Deuda de tarjeta','muted'));
-      if (a.archived) card.append(element('p','Archivada','muted'));
+      const head = element('div', null, 'balance-card-head');
+      const badge = element('span', null, 'icon-badge' + (color === 'negative' ? ' negative' : ''));
+      badge.append(icon(a.kind));
+      head.append(badge, pill(type, isCard ? 'brand' : ''));
+      card.append(head, element('strong', a.name), element('p', money(balance), 'amount ' + color));
+      const meta = element('div', null, 'actions');
+      if (isCard) meta.append(pill(balance < 0 ? 'Saldo a favor' : balance > 0 ? 'Deuda de tarjeta' : 'Al día', balance > 0 ? 'negative' : 'positive'));
+      if (a.archived) meta.append(pill('Archivada'));
+      if (meta.children.length) card.append(meta);
       balances.append(card);
     }
   } catch (error) { $('balance-note').textContent = error.message; }
@@ -349,28 +362,39 @@ function renderHistory() {
   const original = new Map(view.operations.map(op => [op.id,op]));
   const signClass = op => op.kind === 'income' || op.kind === 'refund' || op.kind === 'loan_draw' ? 'positive'
     : op.kind === 'transfer' ? '' : 'negative';
+  const signPrefix = op => op.kind === 'income' || op.kind === 'refund' || op.kind === 'loan_draw' ? '+ '
+    : op.kind === 'transfer' ? '' : '− ';
+  const iconKind = op => op.kind.startsWith('loan_') ? 'loan' : op.kind;
   for (const op of page.rows) {
-    const row = element('article',null,'row movement-row');
+    const row = element('article', null, 'row movement-row');
     const account = accounts.get(op.account_id);
     const destination = accounts.get(op.destination_account_id || op.card_account_id);
     const kind = movementNames[op.kind] || op.kind;
-    const description = element('div',null,'movement-description');
-    description.append(element('strong',op.description || kind));
-    const details = [op.description && kind,op.date,[account?.name,destination?.name].filter(Boolean).join(' → '),categories.get(op.category_id)];
-    description.append(element('p',details.filter(Boolean).join(' · '),'muted'));
+    const avatar = element('span', null, 'movement-icon movement-icon--' + iconKind(op));
+    avatar.append(icon(iconKind(op)));
+    const description = element('div', null, 'movement-description');
+    description.append(element('strong', op.description || kind));
+    const meta = element('div', null, 'movement-meta');
+    meta.append(element('span', op.date));
+    const route = [account?.name, destination?.name].filter(Boolean).join(' → ');
+    if (route) meta.append(pill(route));
+    const cat = categories.get(op.category_id);
+    if (cat) meta.append(pill(cat, op.kind === 'income' ? 'positive' : 'brand'));
+    if (op.description && !cat) meta.append(pill(kind));
+    description.append(meta);
     if (op.original_operation_id) {
       const expense = original.get(op.original_operation_id);
-      description.append(element('p','Gasto original · '+[expense?.date,expense?.description].filter(Boolean).join(' · '),'muted'));
+      description.append(element('p', 'Gasto original · ' + [expense?.date, expense?.description].filter(Boolean).join(' · '), 'muted'));
     }
-    if ([account,destination].some(a => a?.cutoff_date && op.date < a.cutoff_date)) {
-      description.append(element('p','Movimiento anterior a la fecha de corte de una cuenta.','muted'));
+    if ([account, destination].some(a => a?.cutoff_date && op.date < a.cutoff_date)) {
+      description.append(element('p', 'Movimiento anterior a la fecha de corte de una cuenta.', 'muted'));
     }
-    if (op.pending) description.append(element('p',op.conflict ? 'Conflicto por resolver' : 'Pendiente de sincronización','status-label'));
-    row.append(description,element('strong',money(op.amount),'amount '+signClass(op)));
+    if (op.pending) description.append(pill(op.conflict ? 'Conflicto por resolver' : 'Pendiente de sincronización', op.conflict ? 'warning' : 'brand'));
+    row.append(avatar, description, element('strong', signPrefix(op) + money(op.amount), 'amount ' + signClass(op)));
     if (!op.conflict && !op.id.startsWith('loan:') && !op.kind.startsWith('loan_')
       && !queue.some(q => q.recordId === op.id && q.status === 'rejected')) {
-      const actions = element('div',null,'row-actions');
-      actions.append(button('Editar',() => edit(op)),button('Eliminar',() => remove(op)));
+      const actions = element('div', null, 'row-actions');
+      actions.append(button('Editar', () => edit(op), 'secondary compact'), button('Eliminar', () => remove(op), 'danger-ghost compact'));
       row.append(actions);
     }
     list.append(row);
@@ -449,6 +473,9 @@ function fillSelectors() {
   if (!view) return;
   const form = $('movement-form');
   const kind = form.elements.kind.value;
+  for (const btn of document.querySelectorAll('#kind-pills .kind-pill')) {
+    btn.setAttribute('aria-pressed', String(btn.dataset.kind === kind));
+  }
   const accounts = view.accounts;
   const editing = confirmed.operations.find(op => op.id === form.elements.id.value);
   const allowed = (item,field) => !item.archived || item.id === editing?.[field];
@@ -738,16 +765,33 @@ document.querySelectorAll('[data-tab]').forEach(link => link.addEventListener('c
   event.preventDefault();
   tab(link.dataset.tab);
 }));
-$('more-toggle').addEventListener('click',() => showMore($('more-menu').hidden));
+$('more-toggle').addEventListener('click',() => showMore($('more-menu').dataset.open !== 'true'));
 document.addEventListener('click',event => {
   if (!event.target.closest('#more-menu, #more-toggle')) showMore(false);
 });
 document.addEventListener('keydown',event => {
-  if (event.key === 'Escape' && !$('more-menu').hidden) {
+  if (event.key === 'Escape' && $('more-menu').dataset.open === 'true') {
     showMore(false);
     $('more-toggle').focus();
   }
 });
+document.querySelectorAll('#kind-pills .kind-pill').forEach(btn => btn.addEventListener('click', () => {
+  fields('movement-form').kind.value = btn.dataset.kind;
+  fillSelectors();
+}));
+const themeKey = 'misfinanzas:theme';
+function applyTheme(mode) {
+  const valid = ['light', 'dark', 'auto'].includes(mode) ? mode : 'light';
+  document.documentElement.dataset.theme = valid;
+  try { localStorage.setItem(themeKey, valid); } catch {}
+  for (const btn of document.querySelectorAll('#theme-switcher [data-theme-choice]')) {
+    btn.setAttribute('aria-pressed', String(btn.dataset.themeChoice === valid));
+  }
+}
+applyTheme((() => { try { return localStorage.getItem(themeKey) || 'light'; } catch { return 'light'; } })());
+document.querySelectorAll('#theme-switcher [data-theme-choice]').forEach(btn =>
+  btn.addEventListener('click', () => applyTheme(btn.dataset.themeChoice))
+);
 window.addEventListener('hashchange', () => {
   if (user) tab(sectionFromHash(),{navigate:false});
 });

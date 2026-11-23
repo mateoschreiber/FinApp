@@ -693,3 +693,17 @@ Solo visual: iconos SVG propios, micro-movimiento con significado y jerarquía r
 
 - `npx modern-web-guidance@latest legacy-scan static --json`: **0 hallazgos** en 38 guías (52 reglas).
 - `npm test`: **66/66 pruebas JS** en verde (incluyendo la nueva prueba unitaria de `confirmAction` con `<dialog>` y el bump de `sw.js` a `misfinanzas-shell-v8`).
+
+## F17 — Rediseño Visual Fintech Premium (Blanco Dominante + Firma Verde Bosque)
+
+### Cambios aplicados
+
+- **Arquitectura CSS y paleta blanca (`static/style.css`, `static/manifest.webmanifest`)**: organización por capas `@layer reset, tokens, base, layout, components, utilities;`, propiedades lógicas, `scrollbar-gutter: stable`, `@container` en el grid KPI, `corner-shape: squircle` progresivo y `@media (forced-colors: active)`. Superficies `#ffffff` sobre `#f7f9f8` con acentos `#173b2d` / `#edf6f1` y tema claro blanco predeterminado (`data-theme="light"`) con selector *Claro / Oscuro / Sistema* en Configuración.
+- **App Shell y Login (`static/index.html`, `static/app.mjs`)**: consolidación de `.site-bar`, `.session-bar` y `.sync-bar` en una sidebar blanca de `256px` en escritorio (6 enlaces con íconos SVG) y una cabecera compacta translúcida en móvil (`< 12%` de altura del viewport). Pantalla de acceso renovada sobre blanco puro con tarjeta elevada y panel editorial claro.
+- **Componentes financieros (`static/ui.mjs`, `static/app.mjs`, `static/planning.mjs`)**: Bento KPIs en blanco con acento superior verde, tarjetas de cuentas con cápsulas de ícono por tipo (`bank`, `cash`, `wallet`, `card`) y borde verde en tarjetas de crédito, ledger con avatar circular por tipo de movimiento, chips de cuenta/categoría y signo explícito (`+`/`−`), selector segmented pills + caja de importe protagonista en `Nuevo movimiento`, barras de progreso con semántica de alerta en Presupuestos y Metas, y caché SW `misfinanzas-shell-v9`.
+
+### Validación F17
+
+- `npx modern-web-guidance@latest legacy-scan static --json`: **0 hallazgos** en 38 guías (52 reglas).
+- `npm test`: **66/66 pruebas JS** en verde (incluido `service_worker.test.mjs` con `misfinanzas-shell-v9`).
+- `cargo test --test auth --locked`: **15/15 pruebas Rust** en verde.

@@ -1,11 +1,11 @@
 <!doctype html>
-<html lang="es">
+<html lang="es" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#173f35">
-  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#101b17">
+  <meta name="theme-color" content="#ffffff">
+  <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#0e1613">
   <link rel="icon" href="/icon-192.png">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/style.css">
@@ -14,193 +14,281 @@
 <body>
   <header class="site-bar">
     <strong class="wordmark"><span class="brand-mark" aria-hidden="true">M</span>MisFinanzas</strong>
-    <p id="connection" role="status"></p>
+    <p id="connection" class="connection-pill" role="status"></p>
   </header>
   <main>
     <div id="notice" role="alert" hidden></div>
     <p id="storage-warning" role="status" hidden></p>
     <button id="reload-app" type="button" class="secondary" hidden>Aplicar actualización</button>
+
     <section id="login-view" aria-labelledby="login-heading">
       <div class="login-art">
-        <strong class="wordmark"><span class="brand-mark" aria-hidden="true">M</span>MisFinanzas</strong>
+        <div class="login-brand-row">
+          <strong class="wordmark"><span class="brand-mark" aria-hidden="true">M</span>MisFinanzas</strong>
+          <span class="login-badge">PYG · Offline-First</span>
+        </div>
+        <div class="login-showcase">
+          <p class="login-eyebrow">Control patrimonial preciso</p>
+          <p class="login-tagline">Tus cuentas, tarjetas, préstamos y presupuestos en un solo lugar, siempre disponibles incluso sin conexión.</p>
+          <div class="login-metrics" aria-hidden="true">
+            <div class="login-metric-card">
+              <span>Enteros exactos</span>
+              <strong>Guaraníes sin redondeos</strong>
+            </div>
+            <div class="login-metric-card">
+              <span>Sincronización</span>
+              <strong>Local + Servidor propio</strong>
+            </div>
+          </div>
+        </div>
       </div>
       <div class="login-content">
-        <h1 id="login-heading">Iniciar sesión</h1>
-        <p id="login-intro">Ingresa con tu cuenta de MisFinanzas.</p>
-        <form id="login-form" method="post" action="/api/login">
-          <label for="login-username">Usuario</label>
-          <input id="login-username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" enterkeyhint="next" required>
-          <label for="login-password">Contraseña</label>
-          <div class="password-field">
-            <input id="login-password" name="password" type="password" autocomplete="current-password" enterkeyhint="go" aria-describedby="login-error" required>
-            <button id="toggle-password" type="button" aria-controls="login-password" aria-label="Mostrar contraseña">Mostrar</button>
-          </div>
-          <p id="login-error" class="login-error" role="alert"></p>
-          <button id="login-submit" class="login-submit" type="submit">Entrar</button>
-          <p id="login-progress" class="visually-hidden" role="status"></p>
-          <button id="cancel-login" type="button" class="secondary login-cancel" hidden>Volver a mis datos locales</button>
-        </form>
+        <div class="login-card">
+          <p class="login-kicker">Acceso privado</p>
+          <h1 id="login-heading">Iniciar sesión</h1>
+          <p id="login-intro">Ingresa con tu cuenta de MisFinanzas.</p>
+          <form id="login-form" method="post" action="/api/login">
+            <label for="login-username">Usuario</label>
+            <input id="login-username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" enterkeyhint="next" required>
+            <label for="login-password">Contraseña</label>
+            <div class="password-field">
+              <input id="login-password" name="password" type="password" autocomplete="current-password" enterkeyhint="go" aria-describedby="login-error" required>
+              <button id="toggle-password" type="button" aria-controls="login-password" aria-label="Mostrar contraseña">Mostrar</button>
+            </div>
+            <p id="login-error" class="login-error" role="alert"></p>
+            <button id="login-submit" class="login-submit" type="submit">Entrar</button>
+            <p id="login-progress" class="visually-hidden" role="status"></p>
+            <button id="cancel-login" type="button" class="secondary login-cancel" hidden>Volver a mis datos locales</button>
+          </form>
+        </div>
       </div>
     </section>
+
     <div id="app-view" hidden>
-      <div class="topline session-bar">
-        <p id="user-label"></p>
-        <div class="actions">
-          <button type="button" id="relogin" class="secondary" hidden>Volver a iniciar sesión</button>
-          <button type="button" id="logout" class="secondary">Cerrar sesión</button>
+      <aside class="app-sidebar" aria-label="Navegación principal">
+        <div class="sidebar-brand">
+          <strong class="wordmark"><span class="brand-mark" aria-hidden="true">M</span>MisFinanzas</strong>
         </div>
-      </div>
-      <div class="sync-bar">
-        <p id="sync-status" role="status"></p>
-        <button id="local-changes" type="button" class="secondary" hidden>Ver cambios locales</button>
-        <button id="retry-sync" type="button" class="secondary">Sincronizar ahora</button>
-      </div>
-      <nav class="tabs" aria-label="Secciones">
-        <a href="#summary" data-tab="summary"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg>Resumen</a>
-        <a href="#entry" data-tab="entry"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></svg>Nuevo</a>
-        <a href="#credit" data-tab="credit"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/></svg>Créditos</a>
-        <a href="#planning" data-tab="planning"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="15" rx="2"/><path d="M8 3v6M16 3v6M4 11h16"/></svg>Planificación</a>
-        <button id="more-toggle" class="more-toggle" type="button" aria-expanded="false" aria-controls="more-menu"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg>Más</button>
-        <div id="more-menu" class="more-menu" hidden>
-          <a href="#settings" data-tab="settings">Configuración</a>
-          <a href="#exchange" data-tab="exchange">Importar y exportar</a>
-        </div>
-      </nav>
-      <section id="summary" data-view>
-        <div class="topline">
-          <h1 tabindex="-1">Resumen</h1>
-          <button type="button" id="quick-entry"><span aria-hidden="true">+</span> Registrar movimiento</button>
-        </div>
-        <p id="balance-note"></p>
-        <div id="kpis" class="kpis"></div>
-        <h2>Cuentas y tarjetas</h2>
-        <div id="balances" class="cards"></div>
-        <section class="transaction-panel" aria-labelledby="movements-heading">
-        <div class="topline">
-          <h2 id="movements-heading">Movimientos</h2>
-          <p id="history-count" class="muted" role="status"></p>
-        </div>
-        <details class="history-filters"><summary>Filtrar movimientos</summary><form id="history-filter" class="grid">
-          <label>Buscar<input name="text" type="search" placeholder="Descripción o notas"></label>
-          <label>Cuenta<select name="account"></select></label>
-          <label>Categoría<select name="category"></select></label>
-          <label>Tipo<select name="kind">
-            <option value="">Todos</option><option value="expense">Gasto</option>
-            <option value="income">Ingreso</option><option value="transfer">Transferencia</option>
-            <option value="payment">Pago de tarjeta</option><option value="refund">Devolución o reintegro</option>
-            <option value="loan_draw">Desembolso</option><option value="loan_repayment">Pago de capital</option>
-          </select></label>
-          <label>Desde<input type="date" name="from"></label>
-          <label>Hasta<input type="date" name="to"></label>
-        </form></details>
-        <div id="movements"></div>
-        <div id="history-pages" class="actions" hidden>
-          <button type="button" id="previous-page" class="secondary">Anterior</button>
-          <button type="button" id="next-page" class="secondary">Siguiente</button>
-        </div>
-        </section>
-        <h2 id="pending-title" tabindex="-1" hidden>Cambios locales</h2>
-        <div id="pending-list"></div>
-        <h2 id="conflicts-title" tabindex="-1" hidden>Conflictos por resolver</h2>
-        <div id="conflicts"></div>
-      </section>
-      <section id="entry" data-view hidden>
-        <h1 id="entry-heading" tabindex="-1">Nuevo movimiento</h1>
-        <div id="entry-needed" role="status" hidden></div>
-        <form id="movement-form">
-          <input type="hidden" name="id">
-          <div class="entry-fields">
-          <label>Tipo<select name="kind">
-            <option value="expense">Gasto</option><option value="income">Ingreso</option>
-            <option value="payment">Pago de tarjeta</option><option value="transfer">Transferencia</option>
-            <option value="refund">Devolución o reintegro</option>
-          </select></label>
-          <label>Importe en guaraníes<input name="amount" type="number" inputmode="numeric" min="1" max="9007199254740991" step="1" required></label>
-          <label>Cuenta<select name="account_id" required></select></label>
-          <label id="category-label">Categoría<select name="category_id"></select></label>
-          <label id="card-label" hidden>Tarjeta<select name="card_account_id"></select></label>
-          <label id="destination-label" hidden>Cuenta de destino<select name="destination_account_id"></select></label>
-          <label id="original-label" hidden>Gasto original<select name="original_operation_id"></select></label>
-          <label>Fecha<input name="date" type="date" required></label>
+        <nav class="tabs" aria-label="Secciones">
+          <a href="#summary" data-tab="summary"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/></svg><span>Resumen</span></a>
+          <a href="#entry" data-tab="entry"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg><span>Nuevo</span></a>
+          <a href="#credit" data-tab="credit"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><path d="M7 15h4"/></svg><span>Créditos</span></a>
+          <a href="#planning" data-tab="planning"><svg aria-hidden="true" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="16" rx="2"/><path d="M8 3v4M16 3v4M4 10h16"/><path d="M8 14h3M8 17h6"/></svg><span>Planificación</span></a>
+          <button id="more-toggle" class="more-toggle" type="button" aria-expanded="false" aria-controls="more-menu"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.5"/><circle cx="12" cy="12" r="1.5"/><circle cx="19" cy="12" r="1.5"/></svg><span>Más</span></button>
+          <div id="more-menu" class="more-menu">
+            <a href="#settings" data-tab="settings"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span>Configuración</span></a>
+            <a href="#exchange" data-tab="exchange"><svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="M8 11l4 4 4-4"/><path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg><span>Importar y exportar</span></a>
           </div>
-          <p id="entry-cutoff" class="muted" hidden></p>
-          <label>Descripción (opcional)<input name="description" maxlength="500"></label>
-          <label>Notas (opcional)<textarea name="notes" maxlength="4000"></textarea></label>
-          <div class="actions">
-            <button id="save-movement">Guardar movimiento</button>
-            <button type="button" id="cancel-edit" class="secondary" hidden>Cancelar edición</button>
+        </nav>
+        <div class="sidebar-footer">
+          <div class="sync-bar">
+            <p id="sync-status" role="status"></p>
+            <div class="sync-actions">
+              <button id="local-changes" type="button" class="secondary compact" hidden>Ver cambios locales</button>
+              <button id="retry-sync" type="button" class="secondary compact">Sincronizar</button>
+            </div>
           </div>
-        </form>
-      </section>
-      <section id="settings" data-view hidden>
-        <h1 tabindex="-1">Configuración</h1>
-        <p>Necesitas conexión para modificar cuentas y categorías.</p>
-        <div class="grid settings-grid">
-          <section class="workspace-panel">
-            <h2>Cuentas</h2>
-            <div id="account-list"></div>
-            <form id="account-form">
-              <h4>Nueva cuenta</h4>
-              <input type="hidden" name="id">
-              <label>Nombre<input name="name" maxlength="160" required></label>
+          <div class="topline session-bar">
+            <p id="user-label" class="user-chip"></p>
+            <div class="actions">
+              <button type="button" id="relogin" class="secondary compact" hidden>Volver a iniciar sesión</button>
+              <button type="button" id="logout" class="secondary compact">Salir</button>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <div class="app-stage">
+        <section id="summary" data-view>
+          <div class="page-head topline">
+            <div>
+              <p class="page-eyebrow">Panel financiero</p>
+              <h1 tabindex="-1">Resumen</h1>
+            </div>
+            <button type="button" id="quick-entry"><span aria-hidden="true">+</span> Nuevo movimiento</button>
+          </div>
+          <p id="balance-note"></p>
+          <div id="kpis" class="kpis"></div>
+          <div class="section-head">
+            <h2>Cuentas y tarjetas</h2>
+          </div>
+          <div id="balances" class="cards"></div>
+          <section class="transaction-panel" aria-labelledby="movements-heading">
+            <div class="topline panel-header">
+              <div>
+                <h2 id="movements-heading">Movimientos</h2>
+              </div>
+              <p id="history-count" class="muted" role="status"></p>
+            </div>
+            <details class="history-filters"><summary>Filtrar movimientos</summary><form id="history-filter" class="grid">
+              <label>Buscar<input name="text" type="search" placeholder="Descripción o notas"></label>
+              <label>Cuenta<select name="account"></select></label>
+              <label>Categoría<select name="category"></select></label>
               <label>Tipo<select name="kind">
-                <option value="cash">Efectivo</option><option value="bank">Banco</option>
-                <option value="wallet">Billetera</option><option value="card">Tarjeta de crédito</option>
+                <option value="">Todos</option><option value="expense">Gasto</option>
+                <option value="income">Ingreso</option><option value="transfer">Transferencia</option>
+                <option value="payment">Pago de tarjeta</option><option value="refund">Devolución o reintegro</option>
+                <option value="loan_draw">Desembolso</option><option value="loan_repayment">Pago de capital</option>
               </select></label>
-              <label>Saldo inicial en guaraníes<input name="initial_balance" type="number" inputmode="numeric" step="1" value="0" required></label>
-              <label>Fecha de corte (opcional)<input name="cutoff_date" type="date"></label>
-              <p id="cutoff-help" class="muted">Si indicas una fecha de corte, carga el saldo al inicio de ese día. Los movimientos anteriores quedan en el historial.</p>
-              <label>Entidad (opcional)<input name="institution" maxlength="160"></label>
-              <div id="card-details" hidden>
-                <label>Día de cierre<input name="closing_day" type="number" min="1" max="31" step="1"></label>
-                <label>Día de vencimiento<input name="due_day" type="number" min="1" max="31" step="1"></label>
-              </div>
-              <label>Notas (opcional)<textarea name="notes" maxlength="4000"></textarea></label>
-              <div class="actions">
-                <button>Guardar cuenta</button>
-                <button class="secondary" type="button" id="account-cancel" hidden>Cancelar edición</button>
-              </div>
-            </form>
+              <label>Desde<input type="date" name="from"></label>
+              <label>Hasta<input type="date" name="to"></label>
+            </form></details>
+            <div id="movements" class="ledger-list"></div>
+            <div id="history-pages" class="actions pagination-bar" hidden>
+              <button type="button" id="previous-page" class="secondary">Anterior</button>
+              <button type="button" id="next-page" class="secondary">Siguiente</button>
+            </div>
           </section>
-          <section class="workspace-panel">
-            <h2>Categorías</h2>
-            <div id="category-list"></div>
-            <details>
-              <summary>Categorías sugeridas</summary>
-              <form id="suggestions-form">
-                <div id="suggested-categories"></div>
-                <button>Crear categorías seleccionadas</button>
-              </form>
-            </details>
-            <form id="category-form">
-              <h4>Nueva categoría</h4>
-              <input type="hidden" name="id">
-              <label>Nombre<input name="name" maxlength="160" required></label>
-              <label>Tipo<select name="kind"><option value="expense">Gasto</option><option value="income">Ingreso</option></select></label>
-              <div class="actions">
-                <button>Guardar categoría</button>
-                <button class="secondary" type="button" id="category-cancel" hidden>Cancelar edición</button>
-              </div>
-            </form>
-          </section>
-        </div>
-        <details id="user-admin" hidden>
-          <summary>Administración de usuarios</summary>
-          <form id="user-form">
-            <label>Nuevo usuario<input name="username" maxlength="64" required></label>
-            <label>Contraseña<input name="password" type="password" minlength="12" maxlength="256" required autocomplete="new-password"></label>
-            <button>Crear usuario</button>
+          <h2 id="pending-title" tabindex="-1" hidden>Cambios locales</h2>
+          <div id="pending-list"></div>
+          <h2 id="conflicts-title" tabindex="-1" hidden>Conflictos por resolver</h2>
+          <div id="conflicts"></div>
+        </section>
+
+        <section id="entry" data-view hidden>
+          <div class="page-head">
+            <p class="page-eyebrow">Registro rápido</p>
+            <h1 id="entry-heading" tabindex="-1">Nuevo movimiento</h1>
+          </div>
+          <div id="entry-needed" role="status" hidden></div>
+          <form id="movement-form">
+            <input type="hidden" name="id">
+            <div class="kind-pills" id="kind-pills" role="group" aria-label="Tipo de movimiento">
+              <button type="button" class="kind-pill" data-kind="expense" aria-pressed="true">Gasto</button>
+              <button type="button" class="kind-pill" data-kind="income" aria-pressed="false">Ingreso</button>
+              <button type="button" class="kind-pill" data-kind="payment" aria-pressed="false">Pago TC</button>
+              <button type="button" class="kind-pill" data-kind="transfer" aria-pressed="false">Transferencia</button>
+              <button type="button" class="kind-pill" data-kind="refund" aria-pressed="false">Reintegro</button>
+            </div>
+            <div class="entry-fields">
+              <label class="kind-select-wrap">Tipo<select name="kind">
+                <option value="expense">Gasto</option><option value="income">Ingreso</option>
+                <option value="payment">Pago de tarjeta</option><option value="transfer">Transferencia</option>
+                <option value="refund">Devolución o reintegro</option>
+              </select></label>
+              <label class="amount-box">Importe en guaraníes<input name="amount" type="number" inputmode="numeric" min="1" max="9007199254740991" step="1" placeholder="0" required></label>
+              <label>Cuenta<select name="account_id" required></select></label>
+              <label id="category-label">Categoría<select name="category_id"></select></label>
+              <label id="card-label" hidden>Tarjeta<select name="card_account_id"></select></label>
+              <label id="destination-label" hidden>Cuenta de destino<select name="destination_account_id"></select></label>
+              <label id="original-label" hidden>Gasto original<select name="original_operation_id"></select></label>
+              <label>Fecha<input name="date" type="date" required></label>
+            </div>
+            <p id="entry-cutoff" class="muted" hidden></p>
+            <label>Descripción (opcional)<input name="description" maxlength="500" placeholder="Ej. Supermercado, salario, cuota..."></label>
+            <label>Notas (opcional)<textarea name="notes" maxlength="4000" rows="3" placeholder="Detalles adicionales"></textarea></label>
+            <div class="actions form-actions">
+              <button id="save-movement">Guardar movimiento</button>
+              <button type="button" id="cancel-edit" class="secondary" hidden>Cancelar edición</button>
+            </div>
           </form>
-        </details>
-      </section>
-      <section id="credit" data-view hidden><h1 tabindex="-1">Créditos</h1><div id="credit-content"></div></section>
-      <section id="planning" data-view hidden><h1 tabindex="-1">Planificación</h1><div id="planning-content"></div></section>
-      <section id="exchange" data-view hidden>
-        <h1 tabindex="-1">Importar y exportar</h1>
-        <div id="data-tools"></div>
-        <section id="reconciliation" class="workspace-panel"></section>
-      </section>
+        </section>
+
+        <section id="settings" data-view hidden>
+          <div class="page-head">
+            <p class="page-eyebrow">Preferencias y catálogos</p>
+            <h1 tabindex="-1">Configuración</h1>
+            <p class="muted">Necesitas conexión para modificar cuentas y categorías.</p>
+          </div>
+          <section class="workspace-panel theme-panel">
+            <div class="topline">
+              <div>
+                <h2>Apariencia</h2>
+                <p class="muted">Tema blanco fintech predeterminado con acentos verde bosque.</p>
+              </div>
+              <div class="theme-switcher" id="theme-switcher" role="group" aria-label="Tema visual">
+                <button type="button" class="secondary compact" data-theme-choice="light" aria-pressed="true">Claro</button>
+                <button type="button" class="secondary compact" data-theme-choice="dark" aria-pressed="false">Oscuro</button>
+                <button type="button" class="secondary compact" data-theme-choice="auto" aria-pressed="false">Sistema</button>
+              </div>
+            </div>
+          </section>
+          <div class="grid settings-grid">
+            <section class="workspace-panel">
+              <h2>Cuentas</h2>
+              <div id="account-list"></div>
+              <form id="account-form">
+                <h4>Nueva cuenta</h4>
+                <input type="hidden" name="id">
+                <label>Nombre<input name="name" maxlength="160" required></label>
+                <label>Tipo<select name="kind">
+                  <option value="cash">Efectivo</option><option value="bank">Banco</option>
+                  <option value="wallet">Billetera</option><option value="card">Tarjeta de crédito</option>
+                </select></label>
+                <label>Saldo inicial en guaraníes<input name="initial_balance" type="number" inputmode="numeric" step="1" value="0" required></label>
+                <label>Fecha de corte (opcional)<input name="cutoff_date" type="date"></label>
+                <p id="cutoff-help" class="muted">Si indicas una fecha de corte, carga el saldo al inicio de ese día. Los movimientos anteriores quedan en el historial.</p>
+                <label>Entidad (opcional)<input name="institution" maxlength="160"></label>
+                <div id="card-details" hidden>
+                  <label>Día de cierre<input name="closing_day" type="number" min="1" max="31" step="1"></label>
+                  <label>Día de vencimiento<input name="due_day" type="number" min="1" max="31" step="1"></label>
+                </div>
+                <label>Notas (opcional)<textarea name="notes" maxlength="4000"></textarea></label>
+                <div class="actions">
+                  <button>Guardar cuenta</button>
+                  <button class="secondary" type="button" id="account-cancel" hidden>Cancelar edición</button>
+                </div>
+              </form>
+            </section>
+            <section class="workspace-panel">
+              <h2>Categorías</h2>
+              <div id="category-list"></div>
+              <details>
+                <summary>Categorías sugeridas</summary>
+                <form id="suggestions-form">
+                  <div id="suggested-categories"></div>
+                  <button>Crear categorías seleccionadas</button>
+                </form>
+              </details>
+              <form id="category-form">
+                <h4>Nueva categoría</h4>
+                <input type="hidden" name="id">
+                <label>Nombre<input name="name" maxlength="160" required></label>
+                <label>Tipo<select name="kind"><option value="expense">Gasto</option><option value="income">Ingreso</option></select></label>
+                <div class="actions">
+                  <button>Guardar categoría</button>
+                  <button class="secondary" type="button" id="category-cancel" hidden>Cancelar edición</button>
+                </div>
+              </form>
+            </section>
+          </div>
+          <details id="user-admin" class="workspace-accordion" hidden>
+            <summary>Administración de usuarios</summary>
+            <form id="user-form">
+              <label>Nuevo usuario<input name="username" maxlength="64" required></label>
+              <label>Contraseña<input name="password" type="password" minlength="12" maxlength="256" required autocomplete="new-password"></label>
+              <button>Crear usuario</button>
+            </form>
+          </details>
+        </section>
+
+        <section id="credit" data-view hidden>
+          <div class="page-head">
+            <p class="page-eyebrow">Tarjetas y financiamiento</p>
+            <h1 tabindex="-1">Créditos</h1>
+          </div>
+          <div id="credit-content"></div>
+        </section>
+
+        <section id="planning" data-view hidden>
+          <div class="page-head">
+            <p class="page-eyebrow">Informes y metas</p>
+            <h1 tabindex="-1">Planificación</h1>
+          </div>
+          <div id="planning-content"></div>
+        </section>
+
+        <section id="exchange" data-view hidden>
+          <div class="page-head">
+            <p class="page-eyebrow">Datos y extractos</p>
+            <h1 tabindex="-1">Importar y exportar</h1>
+          </div>
+          <div id="data-tools"></div>
+          <section id="reconciliation" class="workspace-panel"></section>
+        </section>
+      </div>
     </div>
+
     <dialog id="confirm-dialog" aria-labelledby="confirm-title">
       <h2 id="confirm-title">Confirmar acción</h2>
       <p id="confirm-message"></p>

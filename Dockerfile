@@ -18,7 +18,7 @@ COPY --from=build /build/target/release/finapp /usr/local/bin/finapp
 # A changed sw.js byte is what makes browsers install the new shell; stamp the commit.
 ARG FINAPP_VERSION=unversioned
 COPY --chown=finapp:finapp static ./static
-RUN sed -i "s/misfinanzas-shell-v8/misfinanzas-shell-${FINAPP_VERSION}/" static/sw.js
+RUN sed -i "s/misfinanzas-shell-v9/misfinanzas-shell-${FINAPP_VERSION}/" static/sw.js
 USER 10001:10001
 ENV FINAPP_BIND=0.0.0.0:3000 FINAPP_DB_PATH=/data/finapp.sqlite
 EXPOSE 3000

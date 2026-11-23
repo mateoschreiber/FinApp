@@ -48,15 +48,35 @@ export function chunkedText(bytes, encode) {
 const ICONS = {
   trend: '<path d="M3 17l6-6 4 4 8-8"/><path d="M15 7h6v6"/>',
   cash: '<rect x="3" y="7" width="18" height="10" rx="2"/><circle cx="12" cy="12" r="2"/>',
-  card: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/>',
+  bank: '<path d="M3 10h18M5 10v8M9 10v8M15 10v8M19 10v8M2 18h20M12 3l9 5H3z"/>',
+  wallet: '<path d="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M16 12h5"/>',
+  card: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/><path d="M7 15h4"/>',
   bars: '<path d="M5 20v-6M11 20V8M17 20v-10M3 20h18"/>',
+  income: '<path d="M7 17L17 7M9 7h8v8"/>',
+  expense: '<path d="M7 7l10 10M17 9v8H9"/>',
+  transfer: '<path d="M7 8h10l-3-3M17 16H7l3 3"/>',
+  payment: '<rect x="3" y="6" width="18" height="13" rx="2"/><path d="M3 10h18"/>',
+  refund: '<path d="M9 14l-4-4 4-4"/><path d="M5 10h9a5 5 0 1 1 0 10h-2"/>',
+  loan: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/>',
 };
 export function icon(name) {
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('aria-hidden', 'true');
   svg.setAttribute('viewBox', '0 0 24 24');
-  svg.innerHTML = ICONS[name];
+  svg.innerHTML = ICONS[name] ?? ICONS.bars;
   return svg;
+}
+
+export function pill(text, tone = '') {
+  return element('span', text, tone ? 'pill pill--' + tone : 'pill');
+}
+
+export function progressBar(percent, tone = '') {
+  const track = element('div', null, 'progress-track');
+  const fill = element('div', null, tone ? 'progress-fill progress-fill--' + tone : 'progress-fill');
+  fill.style.width = Math.max(0, Math.min(100, percent)) + '%';
+  track.append(fill);
+  return track;
 }
 
 export function confirmAction(message, acceptLabel = 'Confirmar') {
