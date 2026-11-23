@@ -311,7 +311,7 @@ checksum = "c6e8948ce679d00a02a94739ea185595dca7118ed04feb991127e443bd3d761f"
 
 [[package]]
 name = "finapp"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "argon2",
  "axum",
@@ -319,13 +319,11 @@ dependencies = [
  "calamine",
  "csv",
  "hex",
- "http-body-util",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2",
  "tokio",
- "tower",
  "tower-http",
  "uuid",
  "zip",

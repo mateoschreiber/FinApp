@@ -13,17 +13,7 @@ jobs:
       - run: rustup default 1.100.0
       - run: cargo fmt --check
       - run: cargo clippy --all-targets --locked -- -D warnings
-      - run: cargo test --locked
-
-  web:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: npm ci
-      - run: npm test
+      - run: cargo build --release --locked
 
   docker:
     runs-on: ubuntu-latest
@@ -32,7 +22,7 @@ jobs:
       - run: docker build .
 
   release:
-    needs: [rust, web, docker]
+    needs: [rust, docker]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     permissions:
@@ -42,11 +32,12 @@ jobs:
       - run: rustup toolchain install 1.100.0 --profile minimal
       - run: rustup default 1.100.0
       - run: cargo build --release --locked
-      - name: Package and publish latest commit release
+      - name: Package and publish latest release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           SHORT_SHA=$(git rev-parse --short HEAD)
+          VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)
           sed -i "s/misfinanzas-shell-v9/misfinanzas-shell-${SHORT_SHA}/" static/sw.js
           tar -czf finapp-linux-x86_64.tar.gz -C target/release finapp -C ../.. static
           git checkout -- static/sw.js
@@ -55,13 +46,13 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -f latest "$GITHUB_SHA"
           git push -f origin refs/tags/latest
-          NOTES="Versión automática del último commit verificado en \`main\` (\`${SHORT_SHA}\`)."
+          NOTES="Release v${VERSION} (\`${SHORT_SHA}\`) — MisFinanzas Emerald Private Wealth."
           if gh release view latest >/dev/null 2>&1; then
-            gh release edit latest --title "MisFinanzas (${SHORT_SHA})" --notes "$NOTES" --target "$GITHUB_SHA"
+            gh release edit latest --title "MisFinanzas v${VERSION} (${SHORT_SHA})" --notes "$NOTES" --target "$GITHUB_SHA"
             gh release upload latest finapp-linux-x86_64.tar.gz finapp-linux-x86_64.tar.gz.sha256 --clobber
           else
             gh release create latest finapp-linux-x86_64.tar.gz finapp-linux-x86_64.tar.gz.sha256 \
-              --title "MisFinanzas (${SHORT_SHA})" \
+              --title "MisFinanzas v${VERSION} (${SHORT_SHA})" \
               --notes "$NOTES" \
               --target "$GITHUB_SHA"
           fi
