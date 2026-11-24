@@ -11,6 +11,10 @@ import {
   expenseCategorySlices, formatRelativeDate, initSpotlight, initialsOf,
   monthlyCashflowSeries, passwordStrength, showToast,
 } from './visuals.mjs';
+import {
+  DEFAULT_THEME, PRESETS, applyThemeConfig, harmoniousRandomHex, isSystemDark,
+  loadStoredThemeConfig, normalizeHex, normalizeThemeConfig, watchThemeChanges,
+} from './theme.mjs';
 
 const $ = id => document.getElementById(id);
 const fields = id => $(id).elements;
@@ -1048,8 +1052,16 @@ function buildCommands() {
     {group: 'Acciones rápidas', label: 'Nueva categoría', icon: 'sparkles', run: () => openCategoryDrawer()},
     ...(user?.is_admin ? [{group: 'Acciones rápidas', label: 'Nuevo usuario (Admin)', icon: 'user', run: () => openUserDrawer()}] : []),
     {group: 'Acciones rápidas', label: 'Sincronizar ahora', icon: 'trend', run: () => synchronize().catch(showError)},
-    {group: 'Apariencia', label: 'Cambiar a tema Claro Alabastro', icon: 'sparkles', run: () => applyTheme('light')},
-    {group: 'Apariencia', label: 'Cambiar a tema Obsidiana Oscuro', icon: 'sparkles', run: () => applyTheme('dark')},
+    {group: 'Apariencia', label: 'Abrir Theme Studio', icon: 'sparkles', run: () => { tab('settings'); setSettingsTab('profile'); }},
+    {group: 'Apariencia', label: 'Modo Claro', icon: 'sparkles', run: () => updateTheme({mode: 'light'})},
+    {group: 'Apariencia', label: 'Modo Oscuro', icon: 'sparkles', run: () => updateTheme({mode: 'dark'})},
+    {group: 'Apariencia', label: 'Modo Sistema', icon: 'sparkles', run: () => updateTheme({mode: 'auto'})},
+    ...PRESETS.map(p => ({
+      group: 'Paletas',
+      label: 'Paleta ' + p.name + ' (' + p.subtitle + ')',
+      icon: 'sparkles',
+      run: () => updateTheme({preset: p.id, accent: p.accent}),
+    })),
     {group: 'Secciones', label: 'Ir a Resumen', icon: 'bars', run: () => tab('summary')},
     {group: 'Secciones', label: 'Ir a Créditos', icon: 'card', run: () => tab('credit')},
     {group: 'Secciones', label: 'Ir a Planificación', icon: 'trend', run: () => tab('planning')},
@@ -1157,6 +1169,7 @@ async function openSession(identity) {
   localStorage.setItem(sessionKey, JSON.stringify(identity));
   try { localStorage.setItem(activityKey, String(lastActivity)); } catch {}
   updateUserBadge();
+  if (identity.theme) updateTheme(identity.theme, {sync: false});
   $('login-view').hidden = true;
   $('app-view').hidden = false;
   $('relogin').hidden = false;
@@ -1167,6 +1180,15 @@ async function openSession(identity) {
   tab(sectionFromHash(), {navigate: false});
   await render();
   await synchronize();
+  if (user && navigator.onLine) {
+    api('/api/me').then(fresh => {
+      if (!fresh || !ownsSession(fresh.id)) return;
+      user = fresh;
+      localStorage.setItem(sessionKey, JSON.stringify(user));
+      updateUserBadge();
+      if (fresh.theme) updateTheme(fresh.theme, {sync: false});
+    }).catch(() => {});
+  }
   if (user?.is_admin && navigator.onLine) loadUsers().catch(() => {});
 }
 
@@ -1426,20 +1448,120 @@ $('movement-form').addEventListener('keydown', event => {
   }
 });
 
-// Theme switcher
-const themeKey = 'misfinanzas:theme';
-function applyTheme(mode) {
-  const valid = ['light', 'dark', 'auto'].includes(mode) ? mode : 'light';
-  document.documentElement.dataset.theme = valid;
-  try { localStorage.setItem(themeKey, valid); } catch {}
-  for (const btn of document.querySelectorAll('#theme-switcher [data-theme-choice]')) {
-    btn.setAttribute('aria-pressed', String(btn.dataset.themeChoice === valid));
+// --- Theme Studio Controller (OKLCH + WCAG + SQLite Sync) ---
+let themeConfig = loadStoredThemeConfig();
+let themeSyncTimer = null;
+
+function renderThemePresets() {
+  const container = $('theme-presets');
+  if (!container) return;
+  container.replaceChildren();
+  for (const preset of PRESETS) {
+    const btn = element('button', null, 'swatch-btn');
+    btn.type = 'button';
+    btn.dataset.preset = preset.id;
+    btn.setAttribute('aria-pressed', String(themeConfig.preset === preset.id));
+    const dot = element('span', null, 'swatch-dot');
+    dot.style.background = preset.accent;
+    dot.setAttribute('aria-hidden', 'true');
+    const meta = element('span', null, 'swatch-meta');
+    meta.append(element('strong', preset.name), element('small', preset.subtitle));
+    btn.append(dot, meta);
+    btn.addEventListener('click', () => updateTheme({preset: preset.id, accent: preset.accent}));
+    container.append(btn);
   }
 }
-applyTheme((() => { try { return localStorage.getItem(themeKey) || 'light'; } catch { return 'light'; } })());
+
+function syncThemeStudioControls(result) {
+  const {config, metrics} = result;
+  for (const btn of document.querySelectorAll('#theme-switcher [data-theme-choice]')) {
+    btn.setAttribute('aria-pressed', String(btn.dataset.themeChoice === config.mode));
+  }
+  const sysLabel = $('theme-system-state');
+  if (sysLabel) sysLabel.textContent = 'Actual: ' + (isSystemDark() ? 'Oscuro' : 'Claro');
+  for (const btn of document.querySelectorAll('#theme-presets [data-preset]')) {
+    btn.setAttribute('aria-pressed', String(btn.dataset.preset === config.preset));
+  }
+  const picker = $('theme-color-picker');
+  if (picker && picker.value.toLowerCase() !== config.accent) picker.value = config.accent;
+  const hexInput = $('theme-hex-input');
+  if (hexInput && document.activeElement !== hexInput) hexInput.value = config.accent.toUpperCase();
+  for (const btn of document.querySelectorAll('[data-studio-prop]')) {
+    btn.setAttribute('aria-pressed', String(config[btn.dataset.studioProp] === btn.dataset.studioVal));
+  }
+  const badge = $('theme-contrast-badge');
+  if (badge) {
+    badge.textContent = `${metrics.grade} · ${metrics.brandContrast.toFixed(1)}:1`;
+    badge.title = `Contraste botón principal ${metrics.brandContrast}:1 · Superficie ${metrics.surfaceContrast}:1`;
+  }
+}
+
+function scheduleThemeSync(config) {
+  clearTimeout(themeSyncTimer);
+  const note = $('theme-sync-note');
+  if (!user) {
+    if (note) note.textContent = 'Preferencias aplicadas localmente.';
+    return;
+  }
+  if (!navigator.onLine) {
+    if (note) note.textContent = 'Guardado en este dispositivo (se sincronizará al conectar).';
+    return;
+  }
+  if (note) note.textContent = 'Guardando en tu cuenta…';
+  const targetUserId = user.id;
+  themeSyncTimer = setTimeout(async () => {
+    if (!ownsSession(targetUserId) || !navigator.onLine) return;
+    try {
+      const saved = await api('/api/me/theme', 'PATCH', config);
+      if (!ownsSession(targetUserId)) return;
+      user = {...user, theme: saved};
+      localStorage.setItem(sessionKey, JSON.stringify(user));
+      if (note) note.textContent = 'Sincronizado con tu cuenta.';
+    } catch {
+      if (note) note.textContent = 'Guardado localmente (no se pudo sincronizar ahora).';
+    }
+  }, 450);
+}
+
+function updateTheme(patch, {sync = true} = {}) {
+  themeConfig = normalizeThemeConfig({...themeConfig, ...patch});
+  const result = applyThemeConfig(themeConfig, {persist: true});
+  syncThemeStudioControls(result);
+  if (sync) scheduleThemeSync(result.config);
+}
+
+renderThemePresets();
+syncThemeStudioControls(applyThemeConfig(themeConfig, {persist: true}));
+
 document.querySelectorAll('#theme-switcher [data-theme-choice]').forEach(btn =>
-  btn.addEventListener('click', () => applyTheme(btn.dataset.themeChoice))
+  btn.addEventListener('click', () => updateTheme({mode: btn.dataset.themeChoice}))
 );
+document.querySelectorAll('[data-studio-prop]').forEach(btn =>
+  btn.addEventListener('click', () => updateTheme({[btn.dataset.studioProp]: btn.dataset.studioVal}))
+);
+$('theme-color-picker').addEventListener('input', event => {
+  updateTheme({preset: 'custom', accent: event.target.value});
+});
+$('theme-hex-input').addEventListener('input', event => {
+  const raw = event.target.value.trim();
+  if (/^#?[0-9a-fA-F]{6}$/.test(raw)) {
+    updateTheme({preset: 'custom', accent: normalizeHex(raw)});
+  }
+});
+$('theme-hex-input').addEventListener('blur', event => {
+  event.target.value = themeConfig.accent.toUpperCase();
+});
+$('theme-random').addEventListener('click', () => {
+  updateTheme({preset: 'custom', accent: harmoniousRandomHex()});
+});
+$('theme-reset').addEventListener('click', () => {
+  updateTheme({...DEFAULT_THEME});
+  notice('Tema restablecido a Esmeralda.');
+});
+watchThemeChanges(source => {
+  if (source === 'storage') themeConfig = loadStoredThemeConfig();
+  syncThemeStudioControls(applyThemeConfig(themeConfig, {persist: false}));
+});
 
 window.addEventListener('hashchange', () => {
   if (user) tab(sectionFromHash(), {navigate: false});

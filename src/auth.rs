@@ -18,11 +18,51 @@ use sha2::{Digest, Sha256};
 use std::collections::VecDeque;
 use uuid::Uuid;
 
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ThemePrefs {
+    pub mode: String,
+    pub preset: String,
+    pub accent: String,
+    pub tint: String,
+    pub surface: String,
+    pub radius: String,
+    pub font: String,
+    pub density: String,
+}
+
+impl ThemePrefs {
+    fn normalized(mut self) -> Option<Self> {
+        self.accent = self.accent.trim().to_ascii_lowercase();
+        let valid_hex = self.accent.len() == 7
+            && self.accent.starts_with('#')
+            && self.accent[1..].bytes().all(|b| b.is_ascii_hexdigit());
+        let valid = valid_hex
+            && matches!(self.mode.as_str(), "light" | "dark" | "auto")
+            && matches!(
+                self.preset.as_str(),
+                "emerald" | "sapphire" | "indigo" | "amber" | "burgundy" | "graphite" | "custom"
+            )
+            && matches!(self.tint.as_str(), "neutral" | "subtle" | "rich")
+            && matches!(self.surface.as_str(), "glass" | "solid" | "editorial")
+            && matches!(self.radius.as_str(), "sharp" | "balanced" | "soft")
+            && matches!(self.font.as_str(), "editorial" | "geometric")
+            && matches!(self.density.as_str(), "comfortable" | "compact");
+        valid.then_some(self)
+    }
+}
+
+fn parse_theme(raw: Option<String>) -> Option<ThemePrefs> {
+    raw.and_then(|s| serde_json::from_str::<ThemePrefs>(&s).ok())
+        .and_then(ThemePrefs::normalized)
+}
+
 #[derive(Clone, Serialize)]
 pub struct User {
     pub id: String,
     pub username: String,
     pub is_admin: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub theme: Option<ThemePrefs>,
 }
 
 #[derive(Serialize)]
@@ -140,7 +180,7 @@ pub fn current_user(db: &Database, headers: &HeaderMap) -> Option<User> {
     let current = now();
     let conn = db.0.lock().ok()?;
     let mut stmt = conn
-        .prepare_cached("SELECT u.id,u.username,u.is_admin FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token_hash=?1 AND s.expires_at>?2")
+        .prepare_cached("SELECT u.id,u.username,u.is_admin,u.theme_json FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token_hash=?1 AND s.expires_at>?2")
         .ok()?;
     let user = stmt
         .query_row(params![hash, current], |r| {
@@ -148,6 +188,7 @@ pub fn current_user(db: &Database, headers: &HeaderMap) -> Option<User> {
                 id: r.get(0)?,
                 username: r.get(1)?,
                 is_admin: r.get(2)?,
+                theme: parse_theme(r.get(3)?),
             })
         })
         .optional()
@@ -190,7 +231,7 @@ pub async fn login(State(state): State<AppState>, Json(creds): Json<Credentials>
     let row: Option<(User, String)> = match state.db.0.lock() {
         Ok(conn) => match conn
             .query_row(
-                "SELECT id,username,is_admin,password_hash FROM users WHERE username=?1",
+                "SELECT id,username,is_admin,theme_json,password_hash FROM users WHERE username=?1",
                 params![creds.username],
                 |r| {
                     Ok((
@@ -198,8 +239,9 @@ pub async fn login(State(state): State<AppState>, Json(creds): Json<Credentials>
                             id: r.get(0)?,
                             username: r.get(1)?,
                             is_admin: r.get(2)?,
+                            theme: parse_theme(r.get(3)?),
                         },
-                        r.get(3)?,
+                        r.get(4)?,
                     ))
                 },
             )
@@ -416,6 +458,40 @@ pub async fn update_me(
     .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
 }
 
+pub async fn update_theme(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(input): Json<ThemePrefs>,
+) -> Response {
+    tokio::task::spawn_blocking(move || {
+        let user = match finance::bound_user(&state.db, &headers) {
+            Ok(u) => u,
+            Err(status) => return status.into_response(),
+        };
+        let Some(valid) = input.normalized() else {
+            return (StatusCode::BAD_REQUEST, "Preferencias de tema inválidas.").into_response();
+        };
+        let Ok(encoded) = serde_json::to_string(&valid) else {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        };
+        let Ok(conn) = state.db.0.lock() else {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        };
+        if conn
+            .execute(
+                "UPDATE users SET theme_json=?1 WHERE id=?2",
+                params![encoded, user.id],
+            )
+            .is_err()
+        {
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+        Json(valid).into_response()
+    })
+    .await
+    .unwrap_or_else(|_| StatusCode::INTERNAL_SERVER_ERROR.into_response())
+}
+
 pub async fn list_users(State(state): State<AppState>, headers: HeaderMap) -> Response {
     tokio::task::spawn_blocking(move || {
         if let Err(status) = admin_user(&state.db, &headers) {
@@ -471,6 +547,7 @@ pub async fn create_user(
             id: Uuid::new_v4().to_string(),
             username: creds.username,
             is_admin: creds.is_admin,
+            theme: None,
         };
         let Ok(conn) = state.db.0.lock() else {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -529,18 +606,18 @@ pub async fn update_user(
         let Ok(tx) = conn.transaction() else {
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         };
-        let current: Option<(String, bool)> = match tx
+        let current: Option<(String, bool, Option<String>)> = match tx
             .query_row(
-                "SELECT username,is_admin FROM users WHERE id=?1",
+                "SELECT username,is_admin,theme_json FROM users WHERE id=?1",
                 params![id],
-                |r| Ok((r.get(0)?, r.get(1)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .optional()
         {
             Ok(v) => v,
             Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         };
-        let Some((mut username, mut is_admin)) = current else {
+        let Some((mut username, mut is_admin, theme_raw)) = current else {
             return StatusCode::NOT_FOUND.into_response();
         };
         if input.is_admin == Some(false) && is_admin {
@@ -618,6 +695,7 @@ pub async fn update_user(
             id,
             username,
             is_admin,
+            theme: parse_theme(theme_raw),
         })
         .into_response()
     })

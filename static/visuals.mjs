@@ -1,7 +1,14 @@
 // Flagship visual helpers: pure SVG chart calculators, Top-Layer animations, spotlight and toasts.
 import {element, money} from './ui.mjs';
 
-const CHART_COLORS = ['#10b981', '#f59e0b', '#0ea5e9', '#8b5cf6', '#f43f5e', '#64748b'];
+const CHART_COLORS = [
+  'var(--chart-1, #10b981)',
+  'var(--chart-2, #f59e0b)',
+  'var(--chart-3, #0ea5e9)',
+  'var(--chart-4, #8b5cf6)',
+  'var(--chart-5, #f43f5e)',
+  'var(--chart-6, #64748b)',
+];
 
 export function initialsOf(name = '') {
   const parts = String(name).trim().split(/\s+/).filter(Boolean);
@@ -113,8 +120,8 @@ export function buildSparklineSvg(series) {
   const defs = svgEl('defs');
   const grad = svgEl('linearGradient', {id: 'vault-spark-fill', x1: '0', y1: '0', x2: '0', y2: '1'});
   grad.append(
-    svgEl('stop', {offset: '0%', 'stop-color': '#34d399', 'stop-opacity': '0.38'}),
-    svgEl('stop', {offset: '100%', 'stop-color': '#34d399', 'stop-opacity': '0'})
+    svgEl('stop', {offset: '0%', 'stop-color': 'var(--spark-fill, #34d399)', 'stop-opacity': '0.38'}),
+    svgEl('stop', {offset: '100%', 'stop-color': 'var(--spark-fill, #34d399)', 'stop-opacity': '0'})
   );
   defs.append(grad);
   svg.append(defs);
@@ -137,7 +144,7 @@ export function buildSparklineSvg(series) {
     lineD += ` C${cx},${y0.toFixed(1)} ${cx},${y1.toFixed(1)} ${x1.toFixed(1)},${y1.toFixed(1)}`;
   }
   const areaD = `${lineD} L${width},${height} L0,${height} Z`;
-  const stroke = series.total < 0n ? '#fda4af' : '#6ee7b7';
+  const stroke = series.total < 0n ? '#fda4af' : 'var(--spark-stroke, #6ee7b7)';
   svg.append(
     svgEl('path', {d: areaD, fill: 'url(#vault-spark-fill)'}),
     svgEl('path', {d: lineD, fill: 'none', stroke, 'stroke-width': '2.5', 'stroke-linecap': 'round', class: 'spark-path'})

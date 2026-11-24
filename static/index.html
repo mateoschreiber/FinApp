@@ -4,7 +4,8 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#f5f8f6">
+  <script src="/theme-init.js"></script>
+  <meta name="theme-color" content="#f4f7f5">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#08100d">
   <link rel="icon" href="/icon-192.png">
   <link rel="manifest" href="/manifest.webmanifest">
@@ -323,25 +324,114 @@
           <div id="spanel-profile" class="subpanel" role="tabpanel" aria-labelledby="stab-profile" hidden>
             <div class="grid profile-grid">
               <div class="profile-col">
-                <section class="workspace-panel">
-                  <h2>Apariencia</h2>
-                  <p class="muted">Elige el estilo visual de MisFinanzas. Los cambios se aplican al instante.</p>
-                  <div class="theme-cards" id="theme-switcher" role="group" aria-label="Tema visual">
-                    <button type="button" class="theme-card" data-theme-choice="light" aria-pressed="true">
-                      <span class="theme-preview theme-preview--light" aria-hidden="true"><span></span><span></span></span>
-                      <strong>Claro Alabastro</strong>
-                      <small>Luminoso y limpio</small>
-                    </button>
-                    <button type="button" class="theme-card" data-theme-choice="dark" aria-pressed="false">
-                      <span class="theme-preview theme-preview--dark" aria-hidden="true"><span></span><span></span></span>
-                      <strong>Obsidiana</strong>
-                      <small>Esmeralda nocturno</small>
-                    </button>
-                    <button type="button" class="theme-card" data-theme-choice="auto" aria-pressed="false">
-                      <span class="theme-preview theme-preview--auto" aria-hidden="true"><span></span><span></span></span>
-                      <strong>Sistema</strong>
-                      <small>Según tu equipo</small>
-                    </button>
+                <section id="theme-studio" class="workspace-panel studio-panel" aria-labelledby="studio-heading">
+                  <div class="topline">
+                    <div>
+                      <h2 id="studio-heading">Theme Studio</h2>
+                      <p class="muted">Autogenera la interfaz desde una paleta curada o tu color favorito con contraste WCAG garantizado.</p>
+                    </div>
+                    <span id="theme-contrast-badge" class="wcag-badge" title="Relación de contraste WCAG del color principal">AAA · 11.4:1</span>
+                  </div>
+
+                  <div id="studio-preview" class="studio-preview" aria-hidden="true">
+                    <div class="studio-preview-vault">
+                      <small>Bóveda PYG · Vista previa</small>
+                      <strong>12.450.000 Gs.</strong>
+                      <small>+ 4.200.000 Gs. este mes</small>
+                    </div>
+                    <div class="studio-preview-right">
+                      <div class="studio-preview-row">
+                        <span>Supermercado</span>
+                        <strong class="amount negative">− 285.000 Gs.</strong>
+                      </div>
+                      <div class="studio-preview-row">
+                        <span>Salario</span>
+                        <strong class="amount positive">+ 6.500.000 Gs.</strong>
+                      </div>
+                      <div class="studio-preview-btn">Nuevo movimiento</div>
+                    </div>
+                  </div>
+
+                  <div class="studio-section">
+                    <h3 class="studio-section-title">Modo de luz</h3>
+                    <div class="theme-cards" id="theme-switcher" role="group" aria-label="Modo de luz">
+                      <button type="button" class="theme-card" data-theme-choice="light" aria-pressed="true">
+                        <span class="theme-preview theme-preview--light" aria-hidden="true"><span></span><span></span></span>
+                        <strong>Claro</strong>
+                        <small>Luminoso y nítido</small>
+                      </button>
+                      <button type="button" class="theme-card" data-theme-choice="dark" aria-pressed="false">
+                        <span class="theme-preview theme-preview--dark" aria-hidden="true"><span></span><span></span></span>
+                        <strong>Oscuro</strong>
+                        <small>Nocturno profundo</small>
+                      </button>
+                      <button type="button" class="theme-card" data-theme-choice="auto" aria-pressed="false">
+                        <span class="theme-preview theme-preview--auto" aria-hidden="true"><span></span><span></span></span>
+                        <strong>Sistema</strong>
+                        <small id="theme-system-state">Según tu equipo</small>
+                      </button>
+                    </div>
+                  </div>
+
+                  <div class="studio-section">
+                    <h3 class="studio-section-title">Paleta de color</h3>
+                    <div id="theme-presets" class="swatch-grid" role="group" aria-label="Paletas predefinidas"></div>
+                    <div class="custom-color-row">
+                      <span class="custom-color-label">Color libre (semilla OKLCH)</span>
+                      <input id="theme-color-picker" class="color-picker-input" type="color" value="#143729" aria-label="Elegir color personalizado">
+                      <input id="theme-hex-input" class="hex-input" type="text" maxlength="7" value="#143729" spellcheck="false" autocomplete="off" aria-label="Código hexadecimal de color">
+                      <button type="button" id="theme-random" class="secondary compact">Sorprenderme</button>
+                    </div>
+                  </div>
+
+                  <div class="studio-grid-2">
+                    <div class="studio-section">
+                      <h3 class="studio-section-title">Tinte del lienzo</h3>
+                      <div class="segmented-group" role="group" aria-label="Intensidad de tinte">
+                        <button type="button" class="seg-btn" data-studio-prop="tint" data-studio-val="neutral" aria-pressed="false">Neutro</button>
+                        <button type="button" class="seg-btn" data-studio-prop="tint" data-studio-val="subtle" aria-pressed="true">Suave</button>
+                        <button type="button" class="seg-btn" data-studio-prop="tint" data-studio-val="rich" aria-pressed="false">Profundo</button>
+                      </div>
+                    </div>
+                    <div class="studio-section">
+                      <h3 class="studio-section-title">Superficie</h3>
+                      <div class="segmented-group" role="group" aria-label="Estilo de superficie">
+                        <button type="button" class="seg-btn" data-studio-prop="surface" data-studio-val="glass" aria-pressed="true">Cristal</button>
+                        <button type="button" class="seg-btn" data-studio-prop="surface" data-studio-val="solid" aria-pressed="false">Sólido</button>
+                        <button type="button" class="seg-btn" data-studio-prop="surface" data-studio-val="editorial" aria-pressed="false">Editorial</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="studio-grid-2">
+                    <div class="studio-section">
+                      <h3 class="studio-section-title">Esquinas</h3>
+                      <div class="segmented-group" role="group" aria-label="Radios de esquina">
+                        <button type="button" class="seg-btn" data-studio-prop="radius" data-studio-val="sharp" aria-pressed="false">Afiladas</button>
+                        <button type="button" class="seg-btn" data-studio-prop="radius" data-studio-val="balanced" aria-pressed="true">Equilibradas</button>
+                        <button type="button" class="seg-btn" data-studio-prop="radius" data-studio-val="soft" aria-pressed="false">Suaves</button>
+                      </div>
+                    </div>
+                    <div class="studio-section">
+                      <h3 class="studio-section-title">Tipografía</h3>
+                      <div class="segmented-group" role="group" aria-label="Estilo tipográfico">
+                        <button type="button" class="seg-btn" data-studio-prop="font" data-studio-val="editorial" aria-pressed="true">Editorial</button>
+                        <button type="button" class="seg-btn" data-studio-prop="font" data-studio-val="geometric" aria-pressed="false">Geométrica</button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div class="studio-section">
+                    <h3 class="studio-section-title">Densidad de información</h3>
+                    <div class="segmented-group" role="group" aria-label="Densidad visual">
+                      <button type="button" class="seg-btn" data-studio-prop="density" data-studio-val="comfortable" aria-pressed="true">Cómoda</button>
+                      <button type="button" class="seg-btn" data-studio-prop="density" data-studio-val="compact" aria-pressed="false">Compacta</button>
+                    </div>
+                  </div>
+
+                  <div class="studio-footer">
+                    <p id="theme-sync-note" class="studio-sync-note" role="status">Preferencias aplicadas al instante.</p>
+                    <button type="button" id="theme-reset" class="secondary compact">Restablecer Esmeralda</button>
                   </div>
                 </section>
                 <section class="workspace-panel security-card">

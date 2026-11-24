@@ -6,7 +6,7 @@
 Backend en **Rust · Axum · SQLite (WAL)** + Interfaz **PWA** sin dependencias externas.
 
 [![CI](https://github.com/mateoschreiber/FinApp/actions/workflows/ci.yml/badge.svg)](https://github.com/mateoschreiber/FinApp/actions/workflows/ci.yml)
-[![Release](https://img.shields.io/badge/release-v1.0.0%20Emerald%20Private%20Wealth-143729?style=flat)](https://github.com/mateoschreiber/FinApp/releases/tag/latest)
+[![Release](https://img.shields.io/badge/release-v1.1.0%20Theme%20Studio-143729?style=flat)](https://github.com/mateoschreiber/FinApp/releases/tag/latest)
 [![Rust](https://img.shields.io/badge/Rust-1.100-000000?logo=rust)](Cargo.toml)
 [![SQLite](https://img.shields.io/badge/SQLite-WAL-003B57?logo=sqlite)](migrations/)
 [![PWA](https://img.shields.io/badge/PWA-Offline--First-10B981)](static/manifest.webmanifest)
@@ -15,17 +15,16 @@ Backend en **Rust · Axum · SQLite (WAL)** + Interfaz **PWA** sin dependencias 
 
 ---
 
-## Release actual — `v1.0.0` (*Emerald Private Wealth*)
+## Release actual — `v1.1.0` (*Theme Studio*)
 
 > [!TIP]
 > **Descarga oficial:** el binario compilado para Linux (`x86_64`) junto con los activos estáticos y su firma `SHA-256` se publican automáticamente en el release [**`latest`**](https://github.com/mateoschreiber/FinApp/releases/tag/latest) en cada actualización verificada de `main`.
 
-### Novedades clave de `v1.0.0`
-- **Interfaz Emerald Private Wealth**: temas *Claro Alabastro*, *Obsidiana* y *Sistema*; efectos *spotlight*, paneles laterales animados (*Slide-Over Drawers*), notificaciones flotantes y paleta de comandos **`Ctrl+K`**.
-- **Dashboard Bento con analítica nativa SVG**: tarjeta *Bóveda PYG* con sparkline de flujo acumulado diario, gráfico *donut* de gastos por categoría, tarjetas de crédito metálicas con filtro por clic e historial agrupado por fecha.
-- **Registro ultrarrápido en guaraníes**: chips acumulables (`+50 mil`, `+100 mil`, `+500 mil`, `+1 millón`), atajo `Shift+Enter` (*Guardar y agregar otro*), duplicación de movimientos y alta inmediata de cuentas o categorías sin salir del formulario.
-- **CRUD integral y administración**: gestión completa de cuentas, tarjetas, categorías, presupuestos, anulación de préstamos impagos, perfil propio (`PATCH /api/me`) y administración de usuarios y roles (`/api/users`).
-- **Seguridad de sesión activa**: hashing `Argon2id`, CSP estricta sin scripts externos y **cierre automático tras 5 minutos de inactividad** sincronizado entre servidor y pestañas con contador en vivo.
+### Novedades clave de `v1.1.0`
+- **Theme Studio completo sincronizado por usuario**: motor perceptual `OKLCH → sRGB` sin dependencias que autogenera toda la interfaz (bóveda, tarjetas metálicas, gráficos SVG y controles nativos) desde **6 paletas curadas** (*Esmeralda*, *Zafiro*, *Índigo*, *Ámbar Oro*, *Borgoña*, *Grafito*) o **cualquier color libre `#RRGGBB`**, con contraste **WCAG AA/AAA** garantizado, ajuste de **tinte**, **superficie** (*Cristal / Sólido / Editorial*), **esquinas**, **tipografía** y **densidad**, carga sin parpadeo (*0 FOUC*) y guardado en SQLite (`PATCH /api/me/theme`).
+- **Dashboard Bento con analítica nativa SVG**: tarjeta *Bóveda PYG* con sparkline de flujo acumulado diario, gráfico *donut* de gastos por categoría, tarjetas de crédito metálicas con filtro por clic, historial agrupado por fecha y paleta de comandos **`Ctrl+K`**.
+- **Registro ultrarrápido en guaraníes**: chips acumulables (`+50 mil`, `+100 mil`, `+500 mil`, `+1 millón`), atajo `Shift+Enter` (*Guardar y agregar otro*), duplicación de movimientos y alta inmediata en *Slide-Over Drawers*.
+- **CRUD integral y seguridad activa**: administración de cuentas, tarjetas, categorías, presupuestos, anulación de préstamos impagos, perfil (`PATCH /api/me`), usuarios (`/api/users`), hashing `Argon2id`, CSP estricta y **cierre automático tras 5 minutos de inactividad** con contador en vivo.
 
 ---
 
@@ -148,7 +147,7 @@ gpg --symmetric --cipher-algo AES256 "$HOME/finapp-backups/ARCHIVO.sqlite"
 ```text
 FinApp/
 ├── src/                  # Servidor Rust + Axum (auth, finance, catalog, credit, planning, exchange, reconciliation)
-├── migrations/           # Migraciones SQLite inmutables (001–009)
+├── migrations/           # Migraciones SQLite inmutables (001–010)
 ├── static/               # Interfaz PWA (HTML, CSS Emerald, ESM, fuentes locales, Service Worker)
 ├── scripts/              # Operación de respaldos y ensayo de restauración
 ├── Dockerfile            # Imagen multi-stage mínima sin privilegios

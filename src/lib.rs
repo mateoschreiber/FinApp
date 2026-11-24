@@ -146,6 +146,7 @@ pub fn app(db: Database, origin: String) -> Router {
         .route("/api/login", post(auth::login))
         .route("/api/logout", post(auth::logout))
         .route("/api/me", get(auth::me).patch(auth::update_me))
+        .route("/api/me/theme", axum::routing::patch(auth::update_theme))
         .route("/api/users", get(auth::list_users).post(auth::create_user))
         .route(
             "/api/users/{id}",
